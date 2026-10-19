@@ -5,7 +5,7 @@ import { createProject, duration, parseProject, type Project, type Summary, type
 import { apiRequest, deleteLocal, download, listLocal, loadLocal, safeName, saveLocal } from './storage';
 import { midiBytes } from './midi';
 import { PianoRoll } from './PianoRoll';
-import { reconcileChords } from './notation';
+import { suggestionPayload, type Harmony } from './harmony';
 import './style.css';
 import './staff.css';
 const StaffEditor = lazy(() => import('./StaffEditor'));
@@ -64,8 +64,16 @@ function App() {
   const change = useCallback((fn: (p: Project) => Project) => {
     if (!current.current) return;
     history.current.past.push(current.current); history.current.past = history.current.past.slice(-50); history.current.future = [];
-    adopt({ ...reconcileChords(current.current, fn(current.current)), updatedAt: new Date().toISOString() }); historyChanged(n => n + 1);
+    adopt({ ...fn(current.current), updatedAt: new Date().toISOString() }); historyChanged(n => n + 1);
   }, [adopt]);
+  const suggest = useCallback(async (step: number, length: number): Promise<Harmony> => {
+    if (!current.current) throw new Error('프로젝트가 아직 열리지 않았습니다.');
+    try { return await apiRequest<Harmony>(apiUrl, token, '/harmony/suggest', 'POST', suggestionPayload(current.current, step, length)); }
+    catch (error) {
+      if (error instanceof TypeError || error instanceof DOMException) throw new Error('코드 추천에는 프로젝트 서버 연결이 필요합니다. 서버 실행 상태와 주소를 확인하세요.');
+      throw error;
+    }
+  }, [apiUrl, token]);
   const stop = useCallback(() => {
     engine.stop(); setPlaying(false);
     if (stopRecording.current) { setBusy('녹음 처리 중'); stopRecording.current(); stopRecording.current = null; }
@@ -204,7 +212,7 @@ function App() {
           <section className="arrangement panel"><div className="panel-title"><h2>전체 스케치 <span>8 BARS</span></h2><span className="muted">편집할 구간을 선택하세요</span></div><div className="bar-overview">{Array.from({ length: 8 }, (_, i) => <button key={i} disabled={recording} className={`${Math.floor(i / 2) === page ? 'chosen' : ''} ${currentBar === i + 1 && playing ? 'current' : ''}`} onClick={() => setPage(Math.floor(i / 2))}><span>{String(i + 1).padStart(2, '0')}</span><svg viewBox="0 0 100 30" aria-hidden="true">{project.notes.filter(n => Math.floor(n.step / 16) === i).map(n => <rect key={n.id} x={(n.step % 16) * 6.25} y={(84 - n.pitch) * 1.1} width={Math.min(n.length, 16 - n.step % 16) * 6.25 - 1} height="2.5" rx="1"/>)}</svg></button>)}</div></section>
           <section className="panel melody-panel"><div className="panel-title"><h2><span className="track-dot keys-dot"/>멜로디 <span>01</span></h2><div className="panel-tools"><select aria-label="가상 악기" disabled={locked} value={project.instrument} onChange={e => change(p => ({ ...p, instrument: e.target.value as Project['instrument'] }))}><option value="soft">Soft keys</option><option value="pluck">Warm pluck</option><option value="synth">Analog synth</option></select><button className="icon-button" aria-label="실행 취소" title="실행 취소" disabled={locked || !history.current.past.length} onClick={() => undo()}><Icon name="undo" size={16}/></button><button className="icon-button" aria-label="다시 실행" title="다시 실행" disabled={locked || !history.current.future.length} onClick={() => undo(true)}><Icon name="redo" size={16}/></button></div></div>
             <div className="editor-tabs" role="tablist" aria-label="멜로디 편집 방식"><button role="tab" id="piano-tab" aria-controls="melody-editor" aria-selected={editor === 'piano'} onClick={() => setEditor('piano')}>피아노 롤</button><button role="tab" id="staff-tab" aria-controls="melody-editor" aria-selected={editor === 'staff'} onClick={() => setEditor('staff')}>오선지 · 코드</button><span>같은 음표를 두 가지 방식으로 편집</span></div>
-            <div id="melody-editor" role="tabpanel" aria-labelledby={editor === 'piano' ? 'piano-tab' : 'staff-tab'}>{editor === 'piano' ? <PianoRoll notes={project.notes} page={page} step={step} selected={selected} select={setSelected} disabled={locked} change={notes => change(p => ({ ...p, notes }))} preview={pitch => { void engine.preview(pitch, project.instrument).catch(notify); }}/> : <Suspense fallback={<p className="staff-help">악보 편집기를 불러오는 중…</p>}><StaffEditor project={project} page={page} step={step} selected={selected} select={setSelected} disabled={locked} change={next => change(() => next)} preview={pitch => { void engine.preview(pitch, project.instrument).catch(notify); }}/></Suspense>}</div>
+            <div id="melody-editor" role="tabpanel" aria-labelledby={editor === 'piano' ? 'piano-tab' : 'staff-tab'}>{editor === 'piano' ? <PianoRoll notes={project.notes} page={page} step={step} selected={selected} select={setSelected} disabled={locked} change={notes => change(p => ({ ...p, notes }))} preview={pitch => { void engine.preview(pitch, project.instrument).catch(notify); }}/> : <Suspense fallback={<p className="staff-help">악보 편집기를 불러오는 중…</p>}><StaffEditor project={project} page={page} step={step} selected={selected} select={setSelected} disabled={locked} change={next => change(() => next)} suggest={suggest} preview={pitch => { void engine.preview(pitch, project.instrument).catch(notify); }}/></Suspense>}</div>
             <div className="note-tools">{note ? <><span>선택한 음표</span><label>길이 <input aria-label="선택한 음표 길이" type="number" min="1" max={128 - note.step} value={note.length} disabled={locked} onChange={e => change(p => ({ ...p, notes: p.notes.map(n => n.id === note.id ? { ...n, length: Math.min(128 - n.step, Math.max(1, Number(e.target.value))) } : n) }))}/><small>칸</small></label><label>세기 <input aria-label="선택한 음표 세기" type="range" min="0.05" max="1" step="0.05" disabled={locked} value={note.velocity} onChange={e => change(p => ({ ...p, notes: p.notes.map(n => n.id === note.id ? { ...n, velocity: Number(e.target.value) } : n) }))}/></label><button disabled={locked} className="icon-button" aria-label="선택한 음표 삭제" onClick={() => { change(p => ({ ...p, notes: p.notes.filter(n => n.id !== selected) })); setSelected(null); }}><Icon name="trash" size={15}/></button></> : <span>클릭해서 음표 추가 · 드래그로 이동 · 우클릭으로 삭제</span>}<span className="grid-label">1/16 GRID</span></div>
           </section>
           <section className="panel drums-panel"><div className="panel-title"><h2><span className="track-dot drums-dot"/>드럼 <span>02</span></h2><span className="muted">칸을 눌러 리듬을 만드세요</span></div><div className="drum-scroll">{(['kick', 'snare', 'hat'] as Drum[]).map((kind, index) => <div className="drum-row" key={kind}><span>{['Kick', 'Snare', 'Hi-hat'][index]}</span><div>{Array.from({ length: 32 }, (_, i) => { const s = page * 32 + i; return <button key={i} aria-label={`${kind} ${s + 1}번째 칸`} aria-pressed={project.drums[kind].includes(s)} disabled={locked} className={`${project.drums[kind].includes(s) ? 'hit' : ''} ${i % 4 === 0 ? 'beat' : ''} ${step === s ? 'now' : ''}`} onClick={() => change(p => ({ ...p, drums: { ...p.drums, [kind]: p.drums[kind].includes(s) ? p.drums[kind].filter(v => v !== s) : [...p.drums[kind], s].sort((a, b) => a - b) } }))}/>; })}</div></div>)}</div></section>

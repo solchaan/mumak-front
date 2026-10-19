@@ -25,12 +25,12 @@ export async function listLocal(): Promise<Summary[]> {
   const all = await transact<Project[]>('readonly', store => store.getAll());
   return all.map(({ id, title, bpm, updatedAt }) => ({ id, title, bpm, updatedAt })).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
-export async function apiRequest<T>(base: string, token: string, path: string, method = 'GET', project?: Project): Promise<T> {
+export async function apiRequest<T>(base: string, token: string, path: string, method = 'GET', body?: unknown): Promise<T> {
   const url = new URL(base);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('올바른 서버 주소를 입력하세요.');
   const response = await fetch(`${base.replace(/\/$/, '')}/api${path}`, {
-    method, headers: { ...(project ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: project ? JSON.stringify(project) : undefined, signal: AbortSignal.timeout(15000), credentials: 'omit',
+    method, headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: body !== undefined ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(15000), credentials: 'omit',
   });
   if (!response.ok) throw new Error(response.status === 401 ? 'API 토큰을 확인하세요.' : `서버 요청 실패 (${response.status})`);
   return response.status === 204 ? undefined as T : response.json();

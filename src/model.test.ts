@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createProject, duration, moveNote, parseProject } from './model.ts';
+import { keyAccidentals, keySpelling } from './notation.ts';
 import { midiBytes } from './midi.ts';
 import { encodeWav } from './wav.ts';
 
@@ -34,6 +35,29 @@ test('MIDI contains tempo, balanced note on/off events and an exact eight-bar ti
   }
   assert.equal(on, off); assert.equal(on, p.notes.length + Object.values(p.drums).flat().length);
   assert.equal(tempo, 625000); assert.equal(tick, 15360);
+});
+test('key signatures validate against the canonical list, spell notes and reach MIDI', () => {
+  const p = createProject();
+  assert.equal(parseProject(JSON.parse(JSON.stringify(p))).key, null);
+  const { key: _unset, ...legacy } = p; assert.equal(parseProject(JSON.parse(JSON.stringify(legacy))).key, null);
+  const keyed = { ...p, key: { tonic: 'Gb', mode: 'major' as const } };
+  assert.deepEqual(parseProject(JSON.parse(JSON.stringify(keyed))).key, keyed.key);
+  for (const invalid of [{ tonic: 'H', mode: 'major' }, { tonic: 'Gb', mode: 'minor' }, { tonic: 'C', mode: 'dorian' }, 'G', 7]) assert.throws(() => parseProject({ ...p, key: invalid }), JSON.stringify(invalid));
+  assert.equal(keySpelling(66, { tonic: 'G', mode: 'major' }), 'F#4'); assert.equal(keySpelling(71, { tonic: 'Gb', mode: 'major' }), 'Cb5');
+  assert.equal(keySpelling(61, { tonic: 'F', mode: 'major' }), 'Db4'); assert.equal(keySpelling(61, { tonic: 'D', mode: 'major' }), 'C#4'); assert.equal(keySpelling(61, null), 'C#4');
+  assert.deepEqual(keyAccidentals({ tonic: 'D', mode: 'major' }), { C: '#', D: '', E: '', F: '#', G: '', A: '', B: '' });
+  assert.deepEqual(keyAccidentals({ tonic: 'C', mode: 'minor' }), { C: '', D: '', E: 'b', F: '', G: '', A: 'b', B: 'b' });
+  const keySignature = (bytes: Uint8Array) => { const i = bytes.findIndex((b, i) => b === 255 && bytes[i + 1] === 89); return i < 0 ? null : [...bytes.slice(i, i + 5)]; };
+  assert.deepEqual(keySignature(midiBytes({ ...p, key: { tonic: 'Eb', mode: 'major' } })), [255, 89, 2, 253, 0]);
+  assert.deepEqual(keySignature(midiBytes({ ...p, key: { tonic: 'E', mode: 'minor' } })), [255, 89, 2, 1, 1]);
+  assert.equal(keySignature(midiBytes(p)), null);
+});
+test('accompaniment pattern defaults to four beats per bar and rejects unknown patterns', () => {
+  const p = createProject(); assert.deepEqual(p.accompaniment, { pattern: 'quarter' });
+  const { accompaniment: _unset, ...legacy } = p;
+  assert.deepEqual(parseProject(JSON.parse(JSON.stringify(legacy))).accompaniment, { pattern: 'quarter' });
+  assert.equal(parseProject({ ...p, accompaniment: { pattern: 'whole', extra: 1 } }).accompaniment.pattern, 'whole');
+  for (const invalid of [{ pattern: 'swing' }, 'quarter', null, {}]) assert.throws(() => parseProject({ ...p, accompaniment: invalid }), JSON.stringify(invalid));
 });
 test('WAV encoder writes stereo PCM with clipping and correct lengths', () => {
   const wav = encodeWav([new Float32Array([-2, 0, 2]), new Float32Array([.5, 0, -.5])], 44100);

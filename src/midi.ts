@@ -1,4 +1,5 @@
 import { type Project } from './model';
+import { accompaniment, findKey } from './notation';
 function variable(value: number): number[] {
   const bytes = [value & 127];
   while ((value >>= 7) > 0) bytes.unshift((value & 127) | 128);
@@ -10,9 +11,21 @@ export function midiBytes(p: Project): Uint8Array {
   const tempo = Math.round(60_000_000 / p.bpm);
   events.push({ tick: 0, data: [255, 81, 3, ...u32(tempo).slice(1)], order: -2 });
   events.push({ tick: 0, data: [255, 88, 4, 4, 2, 24, 8], order: -1 });
+  const key = findKey(p.key);
+  if (key) events.push({ tick: 0, data: [255, 89, 2, key.sharps & 255, key.mode === 'minor' ? 1 : 0], order: -1 });
   for (const n of p.notes) {
     events.push({ tick: n.step * 120, data: [0x90, n.pitch, Math.round(n.velocity * 127)], order: 1 });
     events.push({ tick: (n.step + n.length) * 120, data: [0x80, n.pitch, 0], order: 0 });
+  }
+  // Lead-sheet chords: the symbol as a text event, the generated treble voicing on channel 2 and the bass line on channel 3.
+  for (const c of p.chords) {
+    const text = [...c.symbol].map(ch => ch.charCodeAt(0) & 127);
+    events.push({ tick: c.step * 120, data: [255, 1, ...variable(text.length), ...text], order: -1 });
+  }
+  const acc = accompaniment(p);
+  for (const [channel, notes] of [[1, acc.treble], [2, acc.bass]] as const) for (const n of notes) {
+    events.push({ tick: n.step * 120, data: [0x90 | channel, n.pitch, Math.round(n.velocity * 127)], order: 1 });
+    events.push({ tick: (n.step + n.length) * 120, data: [0x80 | channel, n.pitch, 0], order: 0 });
   }
   for (const [kind, pitch] of [['kick', 36], ['snare', 38], ['hat', 42]] as const) for (const step of p.drums[kind]) {
     events.push({ tick: step * 120, data: [0x99, pitch, 90], order: 1 });

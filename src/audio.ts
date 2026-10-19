@@ -1,5 +1,9 @@
-import { duration, stepSeconds, type Drum, type Instrument, type Project, type Track } from './model';
+import { duration, stepSeconds, type Drum, type Instrument, type Note, type Project, type Track } from './model';
+import { accompaniment } from './notation';
 import { encodeWav } from './wav';
+
+// Lead-sheet chords sound through the generated accompaniment (treble voicing + bass root in the chosen beat pattern).
+const accompanimentNotes = (p: Project): Note[] => { const a = accompaniment(p); return [...a.treble, ...a.bass]; };
 
 type Context = AudioContext | OfflineAudioContext;
 function tone(ctx: Context, output: AudioNode, pitch: number, at: number, seconds: number, velocity: number, instrument: Instrument): AudioScheduledSourceNode[] {
@@ -59,6 +63,7 @@ export class AudioEngine {
   private output?: DynamicsCompressorNode;
   private tracks?: Record<Track, GainNode>;
   private project?: Project;
+  private accompaniment: Note[] = [];
   private sources = new Set<AudioScheduledSourceNode>();
   private timer?: ReturnType<typeof setInterval>;
   private next = 0;
@@ -76,7 +81,7 @@ export class AudioEngine {
     return this.context;
   }
   update(p: Project) {
-    this.project = p;
+    this.project = p; this.accompaniment = accompanimentNotes(p);
     if (this.tracks && this.context) for (const key of ['keys', 'drums', 'voice'] as const) this.tracks[key].gain.setTargetAtTime(p.mixer[key].mute ? 0 : p.mixer[key].volume, this.context.currentTime, .015);
   }
   async preview(pitch: number, instrument: Instrument) {
@@ -95,7 +100,7 @@ export class AudioEngine {
       const data = await (await fetch(p.recording.dataUrl)).arrayBuffer();
       this.recordingBuffer = await ctx.decodeAudioData(data); this.recordingUrl = p.recording.dataUrl;
     }
-    this.project = p; this.loop = loop; this.metronome = metronome;
+    this.project = p; this.accompaniment = accompanimentNotes(p); this.loop = loop; this.metronome = metronome;
     this.tracks = buses(ctx, p, this.output!); this.next = 0; this.startAt = ctx.currentTime + .1;
     this.timer = setInterval(() => this.tick(), 25); this.tick();
     return this.startAt;
@@ -109,6 +114,7 @@ export class AudioEngine {
       // If a background tab missed its scheduling window, resume without a burst of old notes.
       if (at >= ctx.currentTime - .01) {
         for (const note of p.notes) if (note.step === step) this.remember(tone(ctx, this.tracks!.keys, note.pitch, at, note.length * unit, note.velocity, p.instrument));
+        for (const n of this.accompaniment) if (n.step === step) this.remember(tone(ctx, this.tracks!.keys, n.pitch, at, n.length * unit, n.velocity, p.instrument));
         for (const kind of ['kick', 'snare', 'hat'] as const) if (p.drums[kind].includes(step)) this.remember(percussion(ctx, this.tracks!.drums, kind, at));
         if (step === 0 && p.recording && this.recordingBuffer) this.remember([voice(ctx, this.tracks!.voice, p, this.recordingBuffer, at)]);
         if (this.metronome && step % 4 === 0) this.remember(tone(ctx, this.output!, step % 16 === 0 ? 96 : 89, at, .025, .25, 'pluck'));
@@ -132,6 +138,7 @@ export class AudioEngine {
     if (only) for (const key of ['keys', 'drums', 'voice'] as const) if (key !== only) tracks[key].gain.value = 0;
     const unit = stepSeconds(p.bpm);
     for (const note of p.notes) tone(ctx, tracks.keys, note.pitch, note.step * unit, note.length * unit, note.velocity, p.instrument);
+    for (const n of accompanimentNotes(p)) tone(ctx, tracks.keys, n.pitch, n.step * unit, n.length * unit, n.velocity, p.instrument);
     for (const kind of ['kick', 'snare', 'hat'] as const) for (const step of p.drums[kind]) percussion(ctx, tracks.drums, kind, step * unit);
     if (p.recording) {
       const buffer = await ctx.decodeAudioData(await (await fetch(p.recording.dataUrl)).arrayBuffer());
