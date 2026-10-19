@@ -7,3 +7,8 @@ dist/
 build/
 coverage/
 *.log
+.sites-runtime/
+.sites-local/
+test-results/
+playwright-report/
+.test-data/

@@ -1,19 +1,70 @@
-# mumak-front
+# Mumak · Frontend
 
-Mumak의 프론트엔드 저장소입니다.
+8마디 음악 아이디어를 작곡하고 간단히 녹음하는 웹 스케치북입니다. React + TypeScript + Vite를 사용하며, 소리는 브라우저 Web Audio API에서 생성합니다.
 
-브라우저에서 음악 아이디어를 스케치하고, 작곡과 간단한 녹음을 할 수 있는 서비스를 목표로 합니다.
+## 실행
 
-## 첫 버전의 목표
+Node.js 22.12 이상을 사용하세요. 두 저장소를 같은 상위 폴더에 두면 통합 테스트도 실행할 수 있습니다.
 
-- 피아노 롤을 이용한 음표 편집
-- 웹 악기와 드럼 패턴 재생
-- BPM 설정 및 구간 반복 재생
-- 마이크를 이용한 간단한 녹음
-- 프로젝트 저장 및 오디오·MIDI 내보내기
+```sh
+git clone https://github.com/solchaan/mumak-front.git
+git clone https://github.com/solchaan/mumak-back.git
+cd mumak-front
+npm ci
+npm run dev
+```
 
-현재는 저장소 초기화 단계이며, 애플리케이션 코드는 아직 구현되지 않았습니다.
+http://127.0.0.1:5173 에 접속합니다. 포트가 사용 중이면 `npm run dev -- --port 5174`로 변경하세요. 서버 저장을 쓴다면 백엔드 `ALLOWED_ORIGINS`에도 변경한 출처를 추가하세요.
 
-## 관련 저장소
+## 구현된 기능
 
-- 백엔드: https://github.com/solchaan/mumak-back
+- 8마디 / 4분의 4박자, 40–240 BPM, 16분음표 그리드
+- 2마디씩 편집하는 피아노 롤: 클릭 추가, 드래그 이동, 우클릭 삭제, 길이·세기 편집
+- 선택된 음표의 방향키 이동과 Delete/Backspace 삭제
+- Soft keys / Warm pluck / Analog synth 웹 악기
+- 킥·스네어·하이햇 패턴, 트랙별 볼륨과 음소거
+- 오디오 시계 기반 예약 재생, 반복, 메트로놈, Space 재생/정지
+- 마이크 한 트랙 녹음, 8마디 후 자동 종료, 수동 종료, 시작 위치 보정
+- IndexedDB 자동 저장, 프로젝트 목록, 실행 취소/다시 실행
+- JSON 프로젝트 백업·가져오기 (가져오기는 사본으로 생성)
+- 전체 믹스 및 개별 트랙 WAV, 멜로디·드럼 MIDI 내보내기
+- mumak-back 프로젝트 저장·목록·불러오기 연동
+
+WAV는 44.1 kHz / 16-bit 스테레오이며, 8마디 + 1초 잔향으로 트랙의 시작점과 길이가 같습니다. 현재 볼륨·음소거를 반영합니다. MIDI는 음표·BPM·박자·드럼 채널을 포함하지만 악기 음색과 녹음은 포함하지 않습니다.
+
+## 백엔드 연결
+
+별도 터미널에서 mumak-back의 `npm start`를 실행하세요. 앱의 **프로젝트 서버**에서 서버 주소와 필요한 경우 API 토큰을 입력한 뒤 연결합니다. 토큰은 메모리에만 유지합니다. 브라우저 자동 저장과 서버 저장은 별개이며, 서버 저장은 버튼을 누를 때 실행합니다.
+
+기본 주소는 http://127.0.0.1:3001 입니다. `.env.example`을 참고해 `VITE_API_URL`을 설정할 수 있습니다. VITE_ 변수는 클라이언트에 공개되므로 비밀 토큰을 넣으면 안 됩니다.
+
+## 검증
+
+```sh
+npm test
+npm run build
+# 브라우저 통합 테스트: ../mumak-back 체크아웃 필요
+npx playwright install chromium
+npx playwright test
+# 설치된 Google Chrome을 사용하는 경우
+PW_CHANNEL=chrome npx playwright test
+```
+
+통합 테스트는 포트 4178/3018, `.test-data/`와 가상 마이크를 사용합니다. 실제 마이크 품질·장치 지연·Safari 호환성은 수동 검증 대상입니다. CI는 단위 테스트와 프로덕션 빌드를 실행합니다.
+
+## 구조와 현재 범위
+
+- src/model.ts: 프로젝트 형식 v1 및 검증
+- src/audio.ts: 합성 악기, 드럼, 재생 예약, 녹음, 오프라인 렌더링
+- src/PianoRoll.tsx: 음표 편집
+- src/storage.ts: IndexedDB와 프로젝트 API
+- src/midi.ts, src/wav.ts: 파일 인코딩
+- src/main.tsx: 작업실 UI와 프로젝트 생명주기
+
+첫 버전은 단일 사용자, 고정 8마디, C4–C5 범위, 오디오 한 트랙입니다. VST, 다중 녹음 테이크, 계정별 협업, 자동 타임스트레칭은 아직 지원하지 않습니다. 녹음 후 BPM을 바꾸면 음표 템포만 바뀌고 녹음 길이는 유지됩니다. 백그라운드 탭에서는 브라우저가 타이머나 오디오를 중단할 수 있습니다.
+
+마이크에는 HTTPS 또는 localhost와 권한 허용이 필요합니다. 입력 지연은 장치마다 달라 녹음 후 시작 위치를 보정할 수 있습니다. 녹음 한도는 프로젝트당 20 MB입니다. 브라우저 데이터 삭제 시 프로젝트도 사라지므로 JSON 백업을 권장합니다.
+
+프론트 정적 배포와 백엔드 운영 배포는 별개입니다. HTTPS 배포에서 원격 API를 연결하려면 HTTPS API와 정확한 CORS 출처가 필요합니다. Sites 설정은 `.openai/hosting.json`에 있으며 GitHub 저장소와 별도로 관리합니다.
+
+백엔드: https://github.com/solchaan/mumak-back
