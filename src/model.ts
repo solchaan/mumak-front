@@ -1,13 +1,16 @@
+import { MIN_PITCH, MAX_PITCH, parseChord, spellingPitch } from './notation';
+export { MIN_PITCH, MAX_PITCH } from './notation';
 export const STEPS = 128;
 export const PAGE_STEPS = 32;
 export type Drum = 'kick' | 'snare' | 'hat';
 export type Track = 'keys' | 'drums' | 'voice';
 export type Instrument = 'soft' | 'pluck' | 'synth';
-export interface Note { id: string; pitch: number; step: number; length: number; velocity: number }
+export interface Note { id: string; pitch: number; step: number; length: number; velocity: number; spelling?: string }
+export interface Chord { id: string; symbol: string; step: number; length: number; noteIds: string[] }
 export interface Recording { dataUrl: string; duration: number; offset: number }
 export interface Project {
   version: 1; id: string; title: string; bpm: number; bars: 8; instrument: Instrument;
-  notes: Note[]; drums: Record<Drum, number[]>;
+  notes: Note[]; chords: Chord[]; drums: Record<Drum, number[]>;
   mixer: Record<Track, { volume: number; mute: boolean }>;
   recording: Recording | null; updatedAt: string;
 }
@@ -18,7 +21,7 @@ export const duration = (p: Project) => STEPS * stepSeconds(p.bpm);
 export function createProject(demo = false): Project {
   const p: Project = {
     version: 1, id: uid(), title: demo ? '늦은 오후의 스케치' : '새로운 아이디어', bpm: 96, bars: 8, instrument: 'soft',
-    notes: [], drums: { kick: [], snare: [], hat: [] },
+    notes: [], chords: [], drums: { kick: [], snare: [], hat: [] },
     mixer: { keys: { volume: .7, mute: false }, drums: { volume: .55, mute: false }, voice: { volume: .8, mute: false } },
     recording: null, updatedAt: new Date().toISOString(),
   };
@@ -44,8 +47,25 @@ export function parseProject(value: unknown): Project {
   if (!Array.isArray(p.notes) || p.notes.length > 512) fail();
   const ids = new Set();
   for (const n of p.notes) {
-    if (!n || !idPattern.test(n.id) || ids.has(n.id) || !integer(n.pitch, 60, 72) || !integer(n.step, 0, 127) || !integer(n.length, 1, 128 - n.step) || !bounded(n.velocity, .01, 1)) fail();
+    if (!n || !idPattern.test(n.id) || ids.has(n.id) || !integer(n.pitch, MIN_PITCH, MAX_PITCH) || !integer(n.step, 0, 127) || !integer(n.length, 1, 128 - n.step) || !bounded(n.velocity, .01, 1)) fail();
+    if (n.spelling !== undefined && (typeof n.spelling !== 'string' || spellingPitch(n.spelling) !== n.pitch)) fail();
     ids.add(n.id);
+  }
+  const chords = p.chords === undefined ? [] : p.chords;
+  if (!Array.isArray(chords) || chords.length > 128) fail();
+  const chordIds = new Set(), chordSteps = new Set(), claimedNotes = new Set();
+  for (const c of chords) {
+    if (!c || !idPattern.test(c.id) || chordIds.has(c.id) || !integer(c.step, 0, 127) || chordSteps.has(c.step) || !integer(c.length, 1, 128 - c.step) || typeof c.symbol !== 'string' || c.symbol.length > 12 || !Array.isArray(c.noteIds)) fail();
+    let tones: number[] = [];
+    try { tones = parseChord(c.symbol).tones.map(t => t.pitch).sort((a, b) => a - b); } catch { fail(); }
+    if (c.noteIds.length !== tones.length || new Set(c.noteIds).size !== c.noteIds.length) fail();
+    const pitches = c.noteIds.map(id => {
+      const n = p.notes.find(n => n.id === id);
+      if (!n || claimedNotes.has(id) || n.step !== c.step || n.length !== c.length) fail();
+      claimedNotes.add(id); return n!.pitch;
+    }).sort((a, b) => a - b);
+    if (pitches.some((pitch, i) => pitch !== tones[i])) fail();
+    chordIds.add(c.id); chordSteps.add(c.step);
   }
   for (const k of ['kick', 'snare', 'hat'] as const) {
     if (!Array.isArray(p.drums?.[k]) || p.drums[k].length > 128 || p.drums[k].some(s => !integer(s, 0, 127)) || new Set(p.drums[k]).size !== p.drums[k].length) fail();
@@ -56,8 +76,9 @@ export function parseProject(value: unknown): Project {
     if (!r || !bounded(r.duration, .01, 120) || !bounded(r.offset, -5, 48) || typeof r.dataUrl !== 'string' || r.dataUrl.length > 28_000_000 || !/^data:audio\/[a-z0-9.+-]+(?:;codecs=[a-z0-9.,-]+)?;base64,[A-Za-z0-9+/]+={0,2}$/i.test(r.dataUrl)) fail();
   }
   if (typeof p.updatedAt !== 'string' || !Number.isFinite(Date.parse(p.updatedAt))) fail();
-  return p;
+  return { ...p, chords };
 }
 export function moveNote(note: Note, step: number, pitch: number): Note {
-  return { ...note, step: Math.max(0, Math.min(STEPS - note.length, Math.round(step))), pitch: Math.max(60, Math.min(72, Math.round(pitch))) };
+  const movedPitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, Math.round(pitch)));
+  return { ...note, step: Math.max(0, Math.min(STEPS - note.length, Math.round(step))), pitch: movedPitch, ...(movedPitch !== note.pitch ? { spelling: undefined } : {}) };
 }
