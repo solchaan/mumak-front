@@ -9,6 +9,8 @@ export interface Harmony {
   previous: { symbol: string; roman: string | null } | null;
   suggestions: Suggestion[];
   progressions: Progression[];
+  analysis: { romans: { symbol: string; step: number; roman: string | null }[] };
+  tips: { level: 'good' | 'info' | 'warn'; text: string }[];
 }
 // The suggestion request carries notes and chords only; recordings never leave the browser for this call.
 export function suggestionPayload(p: Project, step: number, length: number) {

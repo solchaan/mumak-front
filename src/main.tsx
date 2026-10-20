@@ -9,6 +9,7 @@ import { suggestionPayload, type Harmony } from './harmony';
 import './style.css';
 import './staff.css';
 const StaffEditor = lazy(() => import('./StaffEditor'));
+const ScoreSheet = lazy(() => import('./ScoreSheet'));
 
 function Icon({ name, size = 18 }: { name: string; size?: number }) {
   const paths: Record<string, React.ReactNode> = {
@@ -41,6 +42,7 @@ function App() {
   const [saveStatus, setSaveStatus] = useState('불러오는 중');
   const [message, setMessage] = useState('');
   const [dialog, setDialog] = useState<'export' | 'server' | null>(null);
+  const [sheet, setSheet] = useState(false);
   const [apiUrl, setApiUrl] = useState(import.meta.env.VITE_API_URL || 'http://127.0.0.1:3001');
   const [token, setToken] = useState('');
   const [remote, setRemote] = useState<Summary[]>([]);
@@ -117,7 +119,7 @@ function App() {
   }
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if ((event.target as HTMLElement).closest('input,select,textarea,button,dialog,[role=button]') || busy || recording) return;
+      if ((event.target as HTMLElement).closest('input,select,textarea,button,dialog,[role=button]') || busy || recording || sheet) return;
       if (event.code === 'Space') { event.preventDefault(); void play(); }
     };
     window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler);
@@ -226,8 +228,9 @@ function App() {
         }}>현재 스케치 삭제</button></footer>
       </div>
     </main>
+    {sheet && <Suspense fallback={null}><ScoreSheet project={project} onClose={() => setSheet(false)}/></Suspense>}
     <div className="toast" role="status" aria-live="polite" hidden={!message && !busy}>{busy || message}</div>
-    {dialog && <dialog ref={modal} onCancel={() => { if (!busy) setDialog(null); }} onClose={() => { if (!busy) setDialog(null); }}><div className="dialog-heading"><div><div className="eyebrow">MUMAK WORKSPACE</div><h2>{dialog === 'export' ? '다음 작업으로 이어가기' : '프로젝트 서버'}</h2></div><button disabled={!!busy} className="icon-button" aria-label="닫기" onClick={() => setDialog(null)}><Icon name="close"/></button></div>{dialog === 'export' ? <><p className="dialog-description">WAV로 소리를, MIDI로 음표를 가져가세요. 모든 WAV는 같은 시작점과 길이로 내보냅니다.</p><div className="export-grid">{([['mix', '전체 믹스', '스테레오 WAV · 44.1 kHz / 16 bit'], ['midi', 'MIDI 패턴', '멜로디 + 드럼 · 녹음 제외'], ['json', '프로젝트 백업', '음표와 녹음을 포함한 Mumak JSON'], ['keys', '멜로디 WAV', '현재 악기 소리'], ['drums', '드럼 WAV', '드럼 트랙'], ['voice', '오디오 WAV', '녹음 트랙']] as const).map(([kind, title, detail]) => <button key={kind} disabled={!!busy || kind === 'voice' && !project.recording} onClick={() => void exportFile(kind)}><Icon name="download"/><strong>{title}</strong><small>{detail}</small></button>)}</div><p className="dialog-footnote">WAV에는 현재 볼륨·음소거가 적용됩니다. MIDI에는 악기의 음색과 오디오 녹음이 포함되지 않습니다.</p></> : <><p className="dialog-description">실행 중인 mumak-back에 연결합니다. 브라우저 자동 저장과 별개로, 저장 버튼을 누를 때만 서버로 전송됩니다.</p><label className="form-label">서버 주소<input type="url" value={apiUrl} disabled={!!busy} onChange={e => { setApiUrl(e.target.value); setRemote([]); setServerState(''); }}/></label><label className="form-label">API 토큰 <span>설정한 경우만 입력 · 메모리에만 보관</span><input type="password" autoComplete="off" value={token} disabled={!!busy} onChange={e => setToken(e.target.value)}/></label><div className="server-buttons"><button className="outline-button" disabled={!!busy} onClick={() => void serverAction('list')}>연결 / 목록 새로고침</button><button className="export-button" disabled={!!busy} onClick={() => void serverAction('save')}>현재 프로젝트 저장</button></div><p className="server-state" role="status">{serverState}</p><div className="remote-list">{remote.map(item => <button key={item.id} disabled={!!busy} onClick={() => void serverAction('open', item.id)}><span>{item.title}<small>{item.bpm} BPM</small></span><span>열기 ↗</span></button>)}</div><p className="dialog-footnote">첫 버전은 단일 사용자용입니다. 공유 서버의 계정별 프로젝트 분리는 아직 지원하지 않습니다.</p></>}</dialog>}
+    {dialog && <dialog ref={modal} onCancel={() => { if (!busy) setDialog(null); }} onClose={() => { if (!busy) setDialog(null); }}><div className="dialog-heading"><div><div className="eyebrow">MUMAK WORKSPACE</div><h2>{dialog === 'export' ? '다음 작업으로 이어가기' : '프로젝트 서버'}</h2></div><button disabled={!!busy} className="icon-button" aria-label="닫기" onClick={() => setDialog(null)}><Icon name="close"/></button></div>{dialog === 'export' ? <><p className="dialog-description">WAV로 소리를, MIDI로 음표를 가져가세요. 모든 WAV는 같은 시작점과 길이로 내보냅니다.</p><div className="export-grid">{([['mix', '전체 믹스', '스테레오 WAV · 44.1 kHz / 16 bit'], ['midi', 'MIDI 패턴', '멜로디 + 드럼 · 녹음 제외'], ['json', '프로젝트 백업', '음표와 녹음을 포함한 Mumak JSON'], ['score', '악보 PDF', '멜로디·코드·반주 악보 · 인쇄 대화상자에서 저장'], ['keys', '멜로디 WAV', '현재 악기 소리'], ['drums', '드럼 WAV', '드럼 트랙'], ['voice', '오디오 WAV', '녹음 트랙']] as const).map(([kind, title, detail]) => <button key={kind} disabled={!!busy || kind === 'voice' && !project.recording} onClick={() => { if (kind === 'score') { setDialog(null); setSheet(true); } else void exportFile(kind); }}><Icon name={kind === 'score' ? 'music' : 'download'}/><strong>{title}</strong><small>{detail}</small></button>)}</div><p className="dialog-footnote">WAV에는 현재 볼륨·음소거가 적용됩니다. MIDI에는 악기의 음색과 오디오 녹음이 포함되지 않습니다.</p></> : <><p className="dialog-description">실행 중인 mumak-back에 연결합니다. 브라우저 자동 저장과 별개로, 저장 버튼을 누를 때만 서버로 전송됩니다.</p><label className="form-label">서버 주소<input type="url" value={apiUrl} disabled={!!busy} onChange={e => { setApiUrl(e.target.value); setRemote([]); setServerState(''); }}/></label><label className="form-label">API 토큰 <span>설정한 경우만 입력 · 메모리에만 보관</span><input type="password" autoComplete="off" value={token} disabled={!!busy} onChange={e => setToken(e.target.value)}/></label><div className="server-buttons"><button className="outline-button" disabled={!!busy} onClick={() => void serverAction('list')}>연결 / 목록 새로고침</button><button className="export-button" disabled={!!busy} onClick={() => void serverAction('save')}>현재 프로젝트 저장</button></div><p className="server-state" role="status">{serverState}</p><div className="remote-list">{remote.map(item => <button key={item.id} disabled={!!busy} onClick={() => void serverAction('open', item.id)}><span>{item.title}<small>{item.bpm} BPM</small></span><span>열기 ↗</span></button>)}</div><p className="dialog-footnote">첫 버전은 단일 사용자용입니다. 공유 서버의 계정별 프로젝트 분리는 아직 지원하지 않습니다.</p></>}</dialog>}
   </div>;
 }
 

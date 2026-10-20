@@ -100,6 +100,13 @@ test('server chord suggestions apply a single chord and a whole progression', as
   await page.locator('.bar-overview button').nth(6).click();
   await expect(page.locator('.staff-chord').nth(0)).toContainText('Am');
   await expect(page.locator('.staff-chord').nth(1)).toContainText('F');
+  // Asking again now analyses the whole progression: roman numerals plus study tips.
+  await page.getByRole('button', { name: '코드 추천', exact: true }).click();
+  await expect(page.locator('.chord-analysis em')).toHaveCount(8);
+  await expect(page.locator('.chord-analysis em').first()).toHaveText('I');
+  const tips = page.getByRole('list', { name: '코드 진행 팁' });
+  await expect(tips.locator('li.tip-good', { hasText: 'I–V–vi–IV' })).toHaveCount(1);
+  await expect(tips.locator('li')).toContainText(['마지막 코드 F']);
   await expect(page.locator('.staff-error')).toHaveCount(0);
   await expect(page.locator('.save-status')).toContainText('브라우저에 저장됨');
   expect(errors).toEqual([]);
@@ -195,6 +202,44 @@ test('score view can add the generated accompaniment grand staff or show it alon
   await page.getByRole('tab', { name: '오선지 · 코드' }).click();
   await expect(page.getByLabel('반주 패턴')).toHaveValue('whole');
   await expect(page.locator('.staff-error')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test('score PDF export opens a printable lead sheet and hands it to the print dialog', async ({ page }) => {
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
+  await page.evaluate(() => { const w = window as unknown as { __prints: number; print: () => void }; w.__prints = 0; w.print = () => { w.__prints++; }; });
+  await page.getByLabel('프로젝트 이름').fill('인쇄 테스트');
+  await page.getByLabel('조표', { exact: true }).selectOption('F|major');
+  await page.getByLabel('오선지 음표 길이').selectOption('16');
+  await page.getByLabel('코드 이름', { exact: true }).fill('Bbmaj7');
+  await page.getByRole('button', { name: '코드 추가', exact: true }).click();
+  await page.getByLabel('오선지 음표 길이').selectOption('4');
+  await page.getByLabel('오선지 입력 음높이').selectOption('A4');
+  await page.getByRole('button', { name: '음표 추가', exact: true }).click();
+  await page.getByRole('button', { name: '내보내기', exact: true }).click();
+  await page.getByRole('button', { name: '악보 PDF' }).click();
+  const sheet = page.getByRole('dialog', { name: '악보 인쇄' });
+  await expect(sheet).toBeVisible();
+  await expect(sheet.locator('h1')).toHaveText('인쇄 테스트');
+  await expect(sheet.locator('.print-system .vf-stave')).toHaveCount(8); // four systems of two bars, melody only
+  await expect(sheet.locator('.print-system .vf-keysignature')).toHaveCount(4);
+  await expect(sheet.locator('.print-system text', { hasText: 'Bbmaj7' })).toHaveCount(1);
+  await expect(page).toHaveTitle(/인쇄 테스트 악보/);
+  await sheet.getByLabel('인쇄 악보 표시').selectOption('both');
+  await expect(sheet.locator('.print-system .vf-stave')).toHaveCount(24);
+  await sheet.getByRole('button', { name: 'PDF로 저장' }).click();
+  expect(await page.evaluate(() => (window as unknown as { __prints: number }).__prints)).toBe(1);
+  // Print media must keep the sheet (and only the sheet) on the page; a blank print is only ~1 KB.
+  await page.emulateMedia({ media: 'print' });
+  await expect(page.locator('.sidebar')).toBeHidden();
+  await expect(sheet.locator('.print-system svg').first()).toBeVisible();
+  const pdf = await page.pdf({ format: 'A4' });
+  expect(pdf.subarray(0, 4).toString()).toBe('%PDF');
+  expect(pdf.length).toBeGreaterThan(20_000);
+  await page.emulateMedia({ media: 'screen' });
+  await page.keyboard.press('Escape');
+  await expect(sheet).toHaveCount(0);
+  await expect(page).toHaveTitle(/Mumak/);
   expect(errors).toEqual([]);
 });
 

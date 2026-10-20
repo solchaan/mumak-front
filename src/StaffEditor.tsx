@@ -1,17 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Accidental, Dot, ModifierContext, Renderer, Stave, StaveConnector, StaveNote, StaveTie, TickContext } from 'vexflow';
+import { Renderer } from 'vexflow';
 import { moveNote, uid, type Note, type Project } from './model';
-import { DURATIONS, KEYS, MIN_PITCH, MAX_PITCH, PATTERNS, accompaniment, chordCatalog, chordMatches, chordTones, findKey, keyAccidentals, keyLabel, keySpelling, parseChord, positionSpelling, removeChord, restSegments, segments, spellingPitch, staffPosition, vexKey, writeChord, type AccompanimentPattern, type Mode, type Segment } from './notation';
+import { DURATIONS, KEYS, MIN_PITCH, MAX_PITCH, PATTERNS, accompaniment, chordCatalog, chordMatches, chordTones, keyAccidentals, keyLabel, keySpelling, parseChord, positionSpelling, removeChord, spellingPitch, writeChord, type AccompanimentPattern, type Mode } from './notation';
+import { VIEWS, VIEW_LABELS, geometry, type View } from './layout';
+import { engraveSystem, type Hit } from './score';
 import { applyProgression, type Harmony, type Progression } from './harmony';
 import './staff.css';
 
-const WIDTH = 920, STAVE_GAP = 100, BASE_ROW = 210;
-type StaveKind = 'melody' | 'treble' | 'bass';
-type View = 'melody' | 'both' | 'accompaniment';
-// Which staves a bar shows: the vocal line, the generated accompaniment as a grand staff, or both stacked.
-const VIEWS: Record<View, StaveKind[]> = { melody: ['melody'], both: ['melody', 'treble', 'bass'], accompaniment: ['treble', 'bass'] };
-const VIEW_LABELS: Record<View, string> = { melody: '멜로디만', both: '멜로디 + 반주', accompaniment: '반주만' };
-interface Hit { note: Note; step: number; x: number; y: number; row: number }
 interface Props { project: Project; page: number; step: number; selected: string | null; select: (id: string | null) => void; change: (project: Project) => void; preview: (pitch: number) => void; disabled: boolean; suggest: (step: number, length: number) => Promise<Harmony> }
 
 export default function StaffEditor({ project, page, step, selected, select, change, preview, disabled, suggest }: Props) {
@@ -37,16 +32,13 @@ export default function StaffEditor({ project, page, step, selected, select, cha
   const chord = project.chords.find(c => c.id === chordId);
   const selectedNote = project.notes.find(n => n.id === selected);
   const start = page * 32;
-  const signature = findKey(project.key);
   const keyAcc = keyAccidentals(project.key);
-  // The key signature widens the stave header, so the note grid starts further right and cells shrink to fit.
-  const START = 130 + 7 * Math.abs(signature?.sharps ?? 0);
-  const CELL = Math.floor((WIDTH - 50 - START) / 16);
-  const noteX = (at: number) => START + (at % 16) * CELL;
-  const kinds = VIEWS[view];
-  const last = kinds.length - 1, melodyIndex = kinds.indexOf('melody');
-  const ROW = BASE_ROW + last * STAVE_GAP, HEIGHT = ROW * 2;
-  const staveY = (row: number, k: number) => row * ROW + 45 + k * STAVE_GAP;
+  // One bar per system in the editor so the 16th-note grid stays wide enough to click.
+  const g = geometry(project, view, 1);
+  const { start: START, cell: CELL, row: ROW } = g;
+  const WIDTH = g.width, HEIGHT = ROW * 2, last = g.kinds.length - 1, melodyIndex = g.kinds.indexOf('melody');
+  const noteX = (at: number) => g.noteX(0, at);
+  const staveY = (row: number, k: number) => row * ROW + g.staveY(k);
   const spell = (n: Note) => n.spelling || keySpelling(n.pitch, project.key);
   const resolveAccidental = (letter: string): '' | '#' | 'b' => accidental === 'key' ? keyAcc[letter] : accidental;
 
@@ -60,62 +52,7 @@ export default function StaffEditor({ project, page, step, selected, select, cha
       const context = renderer.getContext();
       context.setFillStyle('#293126').setStrokeStyle('#293126');
       const nextHits: Hit[] = [];
-      const fragments = new Map<string, { vf: StaveNote; index: number; row: number; segment: Segment }[]>();
-      const engrave = (stave: Stave, kind: StaveKind, items: Note[], bar: number, row: number) => {
-        const clef = kind === 'bass' ? 'bass' : 'treble';
-        const groups = new Map<string, Segment[]>();
-        for (const n of items) for (const segment of segments(n.step, n.length, n)) {
-          if (Math.floor(segment.step / 16) !== bar) continue;
-          const key = `${segment.step}:${segment.length}`;
-          groups.set(key, [...(groups.get(key) || []), segment]);
-        }
-        const events = [...groups.values(), ...restSegments(items, bar).map(r => [r])].sort((a, b) => a[0].step - b[0].step || b[0].length - a[0].length);
-        // Accidentals carry through the bar; the key signature sets each letter's starting state.
-        const accidentals = new Map<string, string>();
-        const atTick = new Map<number, number>();
-        for (const group of events) {
-          group.sort((a, b) => staffPosition(a.note ? spell(a.note) : 'B4') - staffPosition(b.note ? spell(b.note) : 'B4'));
-          const first = group[0], rest = !first.note;
-          const spellings = group.map(s => s.note ? spell(s.note) : 'B4');
-          const vf = new StaveNote({ clef, keys: rest ? [clef === 'bass' ? 'd/3' : 'b/4'] : spellings.map(s => s.slice(0, -1).toLowerCase() + '/' + s.slice(-1)), duration: first.code + (rest ? 'r' : ''), auto_stem: true });
-          vf.setStave(stave).setContext(context);
-          if (first.dots) Dot.buildAndAttach([vf], { all: true });
-          if (!rest) spellings.forEach((spelling, i) => {
-            const naturalKey = spelling[0] + spelling.slice(-1), acc = spelling.slice(1, -1);
-            if ((accidentals.get(naturalKey) ?? keyAcc[spelling[0]]) !== acc) vf.addModifier(new Accidental(acc || 'n'), i);
-            accidentals.set(naturalKey, acc);
-          });
-          const modifiers = new ModifierContext(); vf.addToModifierContext(modifiers); modifiers.preFormat();
-          const tick = new TickContext().addTickable(vf).preFormat().setX(0);
-          // Offset different-duration voices at the same onset slightly to keep stems readable.
-          const voiceIndex = atTick.get(first.step) || 0; atTick.set(first.step, voiceIndex + 1);
-          tick.setX(noteX(first.step) - vf.getAbsoluteX() + voiceIndex * 12);
-          vf.draw();
-          if (!rest) group.forEach((s, index) => {
-            const n = s.note!;
-            if (kind === 'melody') nextHits.push({ note: n, step: s.step, x: vf.getAbsoluteX() + 6, y: vf.getYs()[index], row });
-            fragments.set(n.id, [...(fragments.get(n.id) || []), { vf, index, row, segment: s }]);
-          });
-        }
-      };
-      for (let row = 0; row < 2; row++) {
-        const bar = page * 2 + row;
-        const staves = kinds.map((kind, k) => {
-          const stave = new Stave(20, staveY(row, k), WIDTH - 40);
-          stave.addClef(kind === 'bass' ? 'bass' : 'treble');
-          if (project.key) stave.addKeySignature(vexKey(project.key));
-          stave.addTimeSignature('4/4').setContext(context).draw();
-          engrave(stave, kind, kind === 'melody' ? project.notes : kind === 'treble' ? acc.treble : acc.bass, bar, row);
-          return stave;
-        });
-        const treble = kinds.indexOf('treble');
-        if (treble >= 0) new StaveConnector(staves[treble], staves[treble + 1]).setType(StaveConnector.type.BRACE).setContext(context).draw();
-      }
-      for (const items of fragments.values()) items.forEach((item, index) => {
-        const previous = items[index - 1], next = items[index + 1];
-        if (item.segment.fromPrevious && (!previous || previous.row !== item.row)) new StaveTie({ last_note: item.vf, last_indices: [item.index] }).setContext(context).draw();
-        if (item.segment.toNext) new StaveTie({ first_note: item.vf, first_indices: [item.index], last_note: next?.row === item.row ? next.vf : undefined, last_indices: next?.row === item.row ? [next.index] : undefined }).setContext(context).draw();
-      });
+      for (let row = 0; row < 2; row++) engraveSystem({ context, project, acc, geometry: g, bars: [page * 2 + row], y: row * ROW, system: row, onHit: hit => nextHits.push(hit) });
       const svg = canvas.current.querySelector('svg');
       svg?.setAttribute('viewBox', `0 0 ${WIDTH} ${HEIGHT}`); svg?.setAttribute('aria-hidden', 'true');
       setHits(nextHits); setRenderError('');
@@ -207,6 +144,8 @@ export default function StaffEditor({ project, page, step, selected, select, cha
       <div className="chord-suggestions-head"><strong>{harmony.key.label}</strong><span>{harmony.key.estimated ? `추정 조성 · 신뢰도 ${Math.round(harmony.key.confidence * 100)}%` : '지정 조성'}{harmony.previous ? ` · 직전 ${harmony.previous.symbol}${harmony.previous.roman ? ` (${harmony.previous.roman})` : ''}` : ''} · {Math.floor(harmony.position.step / 16) + 1}마디 {Math.floor(harmony.position.step % 16 / 4) + 1}박부터 {harmony.position.length}칸</span></div>
       <div className="chord-chips" role="group" aria-label="추천 코드">{harmony.suggestions.map(s => <button type="button" key={s.symbol} className="chord-chip" title={s.reason} disabled={disabled} onClick={() => useSuggestion(s.symbol)}><strong>{s.symbol}</strong><small>{s.roman}</small></button>)}</div>
       <div className="chord-progressions" role="group" aria-label="추천 코드 진행">{harmony.progressions.map(p => <button type="button" key={p.name} className="text-button" disabled={disabled} title={`${p.name} 진행을 8마디에 적용`} onClick={() => useProgression(p)}>{p.symbols.join(' – ')} 적용</button>)}</div>
+      {harmony.analysis.romans.length > 0 && <div className="chord-analysis"><span>현재 진행</span>{harmony.analysis.romans.map(r => <em key={`${r.step}-${r.symbol}`} title={`${Math.floor(r.step / 16) + 1}마디 ${r.symbol}`}>{r.roman ?? `${r.symbol}?`}</em>)}</div>}
+      {harmony.tips.length > 0 && <ul className="chord-tips" aria-label="코드 진행 팁">{harmony.tips.map(t => <li key={t.text} className={`tip-${t.level}`}>{t.text}</li>)}</ul>}
     </div>}
     {(error || renderError) && <p className="staff-error" role="alert">{error || renderError}</p>}
     <div className="staff-scroll"><div className="staff-paper" style={{ width: WIDTH, height: HEIGHT }}>
@@ -245,7 +184,7 @@ export default function StaffEditor({ project, page, step, selected, select, cha
         {step >= start && step < start + 32 && <line className="staff-playhead" pointerEvents="none" x1={noteX(step)} x2={noteX(step)} y1={staveY(Math.floor((step - start) / 16), 0) + 10} y2={staveY(Math.floor((step - start) / 16), last) + 113}/>}
       </svg>
     </div></div>
-    <div className="staff-help">오선지 클릭으로 멜로디 입력 · 악보 위 코드 줄을 클릭하면 그 위치에 코드 입력 · 반주 보표는 코드 기호와 반주 패턴에서 자동으로 만들어지며 직접 편집하지 않음 · 임시표 버튼이 "조표"면 조표에 맞는 음을 입력 · 음표 선택 후 방향키로 이동 · 우클릭/Delete로 삭제</div>
+    <div className="staff-help">오선지 클릭으로 멜로디 입력 · 악보 위 코드 줄을 클릭하면 그 위치에 코드 입력 · 반주 보표는 코드 기호와 반주 패턴에서 자동으로 만들어지며 직접 편집하지 않음 · 임시표 버튼이 "조표"면 조표에 맞는 음을 입력 · 음표 선택 후 방향키로 이동 · 우클릭/Delete로 삭제 · 악보 PDF는 내보내기에서</div>
     {selectedNote && <div className="staff-selected"><label>선택 음높이<select aria-label="선택한 음표 음높이" value={selectedNote.pitch} disabled={disabled} onChange={e => editNote(Number(e.target.value))}>{Array.from({ length: MAX_PITCH - MIN_PITCH + 1 }, (_, i) => i + MIN_PITCH).map(pitch => <option key={pitch} value={pitch}>{keySpelling(pitch, project.key)}</option>)}</select></label><span>길이·세기는 아래에서 편집합니다.</span></div>}
   </div>;
 }
