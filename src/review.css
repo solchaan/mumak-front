@@ -1,0 +1,17 @@
+.sketch-review { padding-bottom: 18px; }
+.review-intro, .review-summary, .review-result { margin: 12px 20px; font-size: 13px; line-height: 1.7; }
+.review-result .review-intro, .review-result .review-summary { margin: 12px 0; }
+.review-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.review-result h3 { font-size: 14px; margin: 18px 0 8px; }
+.review-result ul { list-style: none; padding: 0; margin: 0; }
+.review-columns li, .review-alternatives li { padding: 12px; margin-bottom: 8px; border: 1px solid #38443b; border-radius: 8px; }
+.review-columns strong, .review-alternatives strong { display: block; }
+.review-columns p, .review-alternatives p { margin: 6px 0; color: #bbc6bf; }
+.review-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0; }
+.review-location { display: block; font-size: 12px; }
+.review-stale, .review-error { color: #e6bb83; margin: 12px 20px; }
+.review-result .review-stale { margin: 12px 0; }
+.review-limits { margin-top: 18px; color: #aebbb2; }
+.review-limits summary { cursor: pointer; }
+.review-limits li { margin: 8px 0; }
+@media (max-width: 700px) { .review-columns { grid-template-columns: 1fr; gap: 0; } .sketch-review .panel-title { flex-wrap: wrap; gap: 12px; } }
