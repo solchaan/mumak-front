@@ -10,6 +10,7 @@ test('edit, undo, persist, and play a melody', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await page.getByRole('button', { name: '새로운 스케치' }).click();
   await page.getByLabel('프로젝트 이름').fill('브라우저 테스트');
+  await page.getByRole('tab', { name: '피아노 롤', exact: true }).click();
   const grid = page.locator('.piano-grid');
   await grid.click({ position: { x: 40, y: 200 } });
   await expect(page.locator('.note')).toHaveCount(1);
@@ -21,7 +22,8 @@ test('edit, undo, persist, and play a melody', async ({ page }) => {
   await expect(page.locator('.save-status')).toContainText('브라우저에 저장됨');
   await page.reload();
   await expect(page.getByLabel('프로젝트 이름')).toHaveValue('브라우저 테스트');
-  await expect(page.locator('.note')).toHaveCount(1);
+  await expect(page.getByRole('tab', { name: '오선지 · 코드' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.staff-note')).toHaveCount(1);
   await page.getByRole('button', { name: '재생', exact: true }).click();
   await expect(page.getByRole('button', { name: '재생 정지', exact: true })).toBeVisible();
   await expect(page.locator('.position')).toContainText('02', { timeout: 5000 });
