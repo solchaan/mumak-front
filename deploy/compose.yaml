@@ -1,0 +1,55 @@
+name: mumak
+services:
+  backend:
+    build:
+      context: ../../mumak-back
+      dockerfile: ../mumak-front/deploy/backend.Dockerfile
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3001
+      DATA_DIR: /data
+      API_TOKEN: ${API_TOKEN:?API_TOKEN required}
+      ALLOWED_ORIGINS: http://localhost:5174,http://127.0.0.1:5174,https://mumak.noroo.kr
+    volumes:
+      - projects:/data
+    networks:
+      default:
+        aliases:
+          - mumak-api
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3001/api/health', {headers:{Authorization:'Bearer '+process.env.API_TOKEN}}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/frontend.Dockerfile
+    environment:
+      API_TOKEN: ${API_TOKEN:?API_TOKEN required}
+    volumes:
+      - ./default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    networks:
+      default:
+      public_proxy:
+        aliases:
+          - mumak-web
+    ports:
+      - 127.0.0.1:5174:80
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1/api/health]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+volumes:
+  projects:
+
+networks:
+  public_proxy:
+    external: true
+    name: game-moyeo-app_default

@@ -1,0 +1,12 @@
+server {
+  listen 80;
+  server_name localhost;
+  root /usr/share/nginx/html;
+  client_max_body_size 30m;
+  location / { try_files $uri $uri/ /index.html; }
+  location /api/ {
+    proxy_pass http://mumak-api:3001;
+    proxy_set_header Authorization "Bearer ${API_TOKEN}";
+    proxy_set_header Host $host;
+  }
+}
