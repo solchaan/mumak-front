@@ -2,7 +2,7 @@ import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 
 import { createRoot } from 'react-dom/client';
 import { AudioEngine, beginRecording } from './audio';
 import { createProject, duration, parseProject, type Project, type Summary, type Track, type Drum } from './model';
-import { apiRequest, deleteLocal, download, listLocal, loadLocal, safeName, saveLocal } from './storage';
+import { apiRequest, deleteLocal, download, listLocal, loadLocal, loadRecovery, safeName, saveLocal } from './storage';
 import { midiBytes } from './midi';
 import { PianoRoll } from './PianoRoll';
 import { suggestionPayload, type Harmony } from './harmony';
@@ -65,8 +65,10 @@ function App() {
   const adopt = useCallback((p: Project) => { current.current = p; setProject(p); }, []);
   const change = useCallback((fn: (p: Project) => Project) => {
     if (!current.current) return;
+    const next = fn(current.current);
+    if (next === current.current) return;
     history.current.past.push(current.current); history.current.past = history.current.past.slice(-50); history.current.future = [];
-    adopt({ ...fn(current.current), updatedAt: new Date().toISOString() }); historyChanged(n => n + 1);
+    adopt({ ...next, updatedAt: new Date().toISOString() }); historyChanged(n => n + 1);
   }, [adopt]);
   const suggest = useCallback(async (step: number, length: number): Promise<Harmony> => {
     if (!current.current) throw new Error('프로젝트가 아직 열리지 않았습니다.');
@@ -94,7 +96,7 @@ function App() {
   useEffect(() => {
     if (!project) return;
     setSaveStatus('저장 중…');
-    saveTimer.current = setTimeout(() => { void persist(project).then(() => { if (current.current === project) setSaveStatus('브라우저에 저장됨'); }).catch(() => setSaveStatus('저장 실패 · JSON 백업 필요')); }, 500);
+    saveTimer.current = setTimeout(() => { void persist(project).then(() => { if (current.current === project) setSaveStatus('브라우저에 저장됨'); }).catch(() => { if (current.current === project) setSaveStatus('저장 실패 · JSON 백업 필요'); }); }, 500);
     return () => clearTimeout(saveTimer.current);
   }, [project, persist]);
   useEffect(() => { if (project && !recording) engine.update(project); }, [project, engine, recording]);
@@ -110,6 +112,33 @@ function App() {
     window.addEventListener('beforeunload', handler); return () => window.removeEventListener('beforeunload', handler);
   }, [recording, saveStatus]);
 
+  async function retrySave() {
+    if (!current.current) return;
+    const snapshot = current.current;
+    clearTimeout(saveTimer.current);
+    setSaveStatus('저장 중…');
+    try { await persist(snapshot); if (current.current === snapshot) setSaveStatus('브라우저에 저장됨'); }
+    catch { if (current.current === snapshot) setSaveStatus('저장 실패 · JSON 백업 필요'); }
+  }
+  useEffect(() => {
+    const flush = () => { if (document.visibilityState === 'hidden') void retrySave(); };
+    document.addEventListener('visibilitychange', flush);
+    return () => document.removeEventListener('visibilitychange', flush);
+  });
+
+  async function recover() {
+    if (!current.current || busy || recording) return;
+    if (!window.confirm('이전 자동 저장본으로 복구할까요? 현재 편집 내용은 실행 취소로 되돌릴 수 있습니다.')) return;
+    stop(); clearTimeout(saveTimer.current); setBusy('저장본 복구 중');
+    try {
+      await saveQueue.current.catch(() => {});
+      const previous = await loadRecovery(current.current.id);
+      change(() => previous); setSelected(null); setPage(0);
+      notify('이전 저장본을 복구했습니다. 실행 취소로 복구 전 편집 상태로 돌아갈 수 있습니다.');
+    } catch (error) { notify(error); void retrySave(); }
+    finally { setBusy(''); }
+  }
+
   async function play() {
     if (playing) { stop(); return; }
     if (!current.current || busy) return;
@@ -119,7 +148,16 @@ function App() {
   }
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if ((event.target as HTMLElement).closest('input,select,textarea,button,dialog,[role=button]') || busy || recording || sheet) return;
+      if (event.defaultPrevented || event.isComposing || busy || recording || sheet || dialog) return;
+      const target = event.target instanceof Element ? event.target : null;
+      // Keep native text editing undo; project shortcuts also work on focused notes/buttons.
+      if (target?.closest('input,select,textarea,[contenteditable=true]')) return;
+      if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+        const key = event.key.toLowerCase();
+        if (key === 'z' || key === 'y') { event.preventDefault(); undo(key === 'y' || event.shiftKey); }
+        return;
+      }
+      if (target?.closest('button,[role=button]')) return;
       if (event.code === 'Space') { event.preventDefault(); void play(); }
     };
     window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler);
@@ -128,17 +166,18 @@ function App() {
     if (busy || recording) return;
     stop(); setBusy('프로젝트 여는 중');
     try {
+      clearTimeout(saveTimer.current);
       if (current.current) await persist(current.current);
       const p = next ? await loadLocal(next) : createProject(!blank);
       history.current = { past: [], future: [] }; adopt(p); setSelected(null); setPage(0);
     } catch (error) { notify(error); } finally { setBusy(''); }
   }
   function undo(redo = false) {
-    if (!current.current) return;
+    if (!current.current || busy || recording) return;
     const from = redo ? history.current.future : history.current.past;
     const to = redo ? history.current.past : history.current.future;
     const p = from.pop(); if (!p) return;
-    stop(); to.push(current.current); adopt({ ...p, updatedAt: new Date().toISOString() }); historyChanged(n => n + 1);
+    stop(); setSelected(id => p.notes.some(note => note.id === id) ? id : null); to.push(current.current); adopt({ ...p, updatedAt: new Date().toISOString() }); historyChanged(n => n + 1);
   }
   async function record() {
     if (!current.current || busy) return;
@@ -172,6 +211,7 @@ function App() {
     try {
       if (file.size > 30 * 1024 * 1024) throw new Error('프로젝트 파일은 30 MB 이하여야 합니다.');
       const p = parseProject(JSON.parse(await file.text()));
+      clearTimeout(saveTimer.current);
       if (current.current) await persist(current.current);
       // Import as a copy so a backup never silently overwrites another local project.
       adopt({ ...p, id: crypto.randomUUID(), updatedAt: new Date().toISOString() }); history.current = { past: [], future: [] }; setSelected(null); setPage(0);
@@ -184,6 +224,7 @@ function App() {
       if (action === 'save') await apiRequest(apiUrl, token, `/projects/${current.current!.id}`, 'PUT', current.current!);
       if (action === 'open') {
         const p = parseProject(await apiRequest(apiUrl, token, `/projects/${id}`));
+        clearTimeout(saveTimer.current);
         if (current.current) await persist(current.current);
         stop(); adopt(p); history.current = { past: [], future: [] }; setSelected(null); setPage(0); setDialog(null);
       } else { const result = await apiRequest<{ projects: Summary[] }>(apiUrl, token, '/projects'); setRemote(result.projects); setServerState(action === 'save' ? '현재 프로젝트를 서버에 저장했습니다.' : '서버에 연결되었습니다.'); }
@@ -202,17 +243,17 @@ function App() {
       <button className="new-project" disabled={locked} onClick={() => void switchProject(undefined, true)}><Icon name="plus"/>새로운 스케치</button>
       <div className="section-label"><span>내 스케치</span><span>{projects.length.toString().padStart(2, '0')}</span></div>
       <nav className="project-list" aria-label="저장된 프로젝트">{projects.map(item => <button disabled={locked} className={`project-link ${item.id === project.id ? 'active' : ''}`} key={item.id} onClick={() => void switchProject(item.id)}><Icon name="music"/><span><strong>{item.title}</strong><small>{item.bpm} BPM · {new Date(item.updatedAt).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' })}</small></span><i/></button>)}</nav>
-      <div className="sidebar-bottom"><button disabled={locked} onClick={() => importInput.current?.click()}><Icon name="folder"/>프로젝트 가져오기</button><button disabled={locked} onClick={() => void switchProject()}><Icon name="headphones"/>데모 스케치 열기</button><button disabled={locked} onClick={() => setDialog('server')}><Icon name="cloud"/>프로젝트 서버</button><p>작은 아이디어가<br/>한 곡이 되는 곳.</p><span className="local-badge"><i/> LOCAL WORKSPACE</span></div>
+      <div className="sidebar-bottom"><button disabled={locked} onClick={() => importInput.current?.click()}><Icon name="folder"/>프로젝트 가져오기</button><button disabled={locked} onClick={() => void switchProject()}><Icon name="headphones"/>데모 스케치 열기</button><button disabled={locked} onClick={() => setDialog('server')}><Icon name="cloud"/>프로젝트 서버</button><p>작은 아이디어가<br/>한 곡이 되는 곳.</p><button disabled={locked} onClick={() => void recover()}><Icon name="undo"/>이전 저장본 복구</button><span className="local-badge"><i/> LOCAL WORKSPACE</span></div>
       <input ref={importInput} type="file" accept=".json,application/json" hidden onChange={e => { void importFile(e.target.files?.[0]); e.target.value = ''; }}/>
     </aside>
     <main>
-      <header className="topbar"><div className="breadcrumb">작업실 <span>/</span> 음악 스케치</div><span className={`save-status ${saveStatus.includes('실패') ? 'error' : ''}`}><Icon name="check" size={14}/>{saveStatus}</span><button className="export-button" disabled={locked} onClick={() => setDialog('export')}><Icon name="download"/>내보내기</button></header>
+      <header className="topbar"><div className="breadcrumb">작업실 <span>/</span> 음악 스케치</div><span className={`save-status ${saveStatus.includes('실패') ? 'error' : ''}`}><Icon name="check" size={14}/>{saveStatus}</span>{saveStatus.startsWith('저장 실패') && <button className="text-button" disabled={locked} onClick={() => void retrySave()}>저장 다시 시도</button>}<button className="export-button" disabled={locked} onClick={() => setDialog('export')}><Icon name="download"/>내보내기</button></header>
       <div className="workspace">
         <section className="project-heading"><div><div className="eyebrow">SKETCHBOOK / 001</div><input aria-label="프로젝트 이름" className="project-title" value={project.title} maxLength={100} disabled={locked} onChange={e => change(p => ({ ...p, title: e.target.value }))} onBlur={() => { if (!project.title.trim()) change(p => ({ ...p, title: '이름 없는 스케치' })); }}/><p>떠오른 멜로디를 놓치지 마세요. 여기서 시작하면 됩니다.</p></div><div className="project-meta"><span>8 <small>마디</small></span><span>4/4 <small>박자</small></span><span>{Math.round(duration(project))}<small>초</small></span></div></section>
         <section className="transport" aria-label="재생 컨트롤"><div className="transport-main"><button className={`play-button ${playing ? 'is-playing' : ''}`} disabled={!!busy} onClick={() => void play()} aria-label={playing ? '재생 정지' : '재생'}><Icon name={playing ? 'stop' : 'play'} size={20}/></button><button className={`record-button ${recording ? 'recording' : ''}`} disabled={!!busy} onClick={() => recording ? stop() : void record()} aria-label={recording ? '녹음 정지' : '녹음 시작'}><span/></button><div className="position">{String(currentBar).padStart(2, '0')}<span> : </span>{String(step < 0 ? 1 : Math.floor(step % 16 / 4) + 1).padStart(2, '0')}<small>BAR / BEAT</small></div></div><div className="tempo"><input type="number" aria-label="템포 BPM" min="40" max="240" value={project.bpm} disabled={locked} onChange={e => { stop(); change(p => ({ ...p, bpm: Math.max(40, Math.min(240, Math.round(Number(e.target.value) || 40))) })); }}/><span>BPM</span></div><button className={`toggle ${loop ? 'on' : ''}`} disabled={locked} aria-pressed={loop} onClick={() => { stop(); setLoop(!loop); }}><Icon name="loop"/>반복</button><button className={`toggle ${metro ? 'on' : ''}`} disabled={locked} aria-pressed={metro} onClick={() => { stop(); setMetro(!metro); }}><span className="metronome">♩</span>메트로놈</button><div className="transport-tip">{recording ? <span className="record-label">● 녹음 중 · 8마디 후 자동 종료</span> : <><kbd>space</kbd> 재생 / 정지</>}</div></section>
         <div className="editor-layout"><div className="editor-column">
           <section className="arrangement panel"><div className="panel-title"><h2>전체 스케치 <span>8 BARS</span></h2><span className="muted">편집할 구간을 선택하세요</span></div><div className="bar-overview">{Array.from({ length: 8 }, (_, i) => <button key={i} disabled={recording} className={`${Math.floor(i / 2) === page ? 'chosen' : ''} ${currentBar === i + 1 && playing ? 'current' : ''}`} onClick={() => setPage(Math.floor(i / 2))}><span>{String(i + 1).padStart(2, '0')}</span><svg viewBox="0 0 100 30" aria-hidden="true">{project.notes.filter(n => Math.floor(n.step / 16) === i).map(n => <rect key={n.id} x={(n.step % 16) * 6.25} y={(84 - n.pitch) * 1.1} width={Math.min(n.length, 16 - n.step % 16) * 6.25 - 1} height="2.5" rx="1"/>)}</svg></button>)}</div></section>
-          <section className="panel melody-panel"><div className="panel-title"><h2><span className="track-dot keys-dot"/>멜로디 <span>01</span></h2><div className="panel-tools"><select aria-label="가상 악기" disabled={locked} value={project.instrument} onChange={e => change(p => ({ ...p, instrument: e.target.value as Project['instrument'] }))}><option value="soft">Soft keys</option><option value="pluck">Warm pluck</option><option value="synth">Analog synth</option></select><button className="icon-button" aria-label="실행 취소" title="실행 취소" disabled={locked || !history.current.past.length} onClick={() => undo()}><Icon name="undo" size={16}/></button><button className="icon-button" aria-label="다시 실행" title="다시 실행" disabled={locked || !history.current.future.length} onClick={() => undo(true)}><Icon name="redo" size={16}/></button></div></div>
+          <section className="panel melody-panel"><div className="panel-title"><h2><span className="track-dot keys-dot"/>멜로디 <span>01</span></h2><div className="panel-tools"><select aria-label="가상 악기" disabled={locked} value={project.instrument} onChange={e => change(p => ({ ...p, instrument: e.target.value as Project['instrument'] }))}><option value="soft">Soft keys</option><option value="pluck">Warm pluck</option><option value="synth">Analog synth</option></select><button className="icon-button" aria-label="실행 취소" title="실행 취소 (Ctrl/⌘ Z)" aria-keyshortcuts="Control+z Meta+z" disabled={locked || !history.current.past.length} onClick={() => undo()}><Icon name="undo" size={16}/></button><button className="icon-button" aria-label="다시 실행" title="다시 실행 (Ctrl/⌘ Shift Z 또는 Ctrl Y)" aria-keyshortcuts="Control+Shift+z Meta+Shift+z Control+y" disabled={locked || !history.current.future.length} onClick={() => undo(true)}><Icon name="redo" size={16}/></button></div></div>
             <div className="editor-tabs" role="tablist" aria-label="멜로디 편집 방식"><button role="tab" id="piano-tab" aria-controls="melody-editor" aria-selected={editor === 'piano'} onClick={() => setEditor('piano')}>피아노 롤</button><button role="tab" id="staff-tab" aria-controls="melody-editor" aria-selected={editor === 'staff'} onClick={() => setEditor('staff')}>오선지 · 코드</button><span>같은 음표를 두 가지 방식으로 편집</span></div>
             <div id="melody-editor" role="tabpanel" aria-labelledby={editor === 'piano' ? 'piano-tab' : 'staff-tab'}>{editor === 'piano' ? <PianoRoll notes={project.notes} page={page} step={step} selected={selected} select={setSelected} disabled={locked} change={notes => change(p => ({ ...p, notes }))} preview={pitch => { void engine.preview(pitch, project.instrument).catch(notify); }}/> : <Suspense fallback={<p className="staff-help">악보 편집기를 불러오는 중…</p>}><StaffEditor project={project} page={page} step={step} selected={selected} select={setSelected} disabled={locked} change={next => change(() => next)} suggest={suggest} preview={pitch => { void engine.preview(pitch, project.instrument).catch(notify); }}/></Suspense>}</div>
             <div className="note-tools">{note ? <><span>선택한 음표</span><label>길이 <input aria-label="선택한 음표 길이" type="number" min="1" max={128 - note.step} value={note.length} disabled={locked} onChange={e => change(p => ({ ...p, notes: p.notes.map(n => n.id === note.id ? { ...n, length: Math.min(128 - n.step, Math.max(1, Number(e.target.value))) } : n) }))}/><small>칸</small></label><label>세기 <input aria-label="선택한 음표 세기" type="range" min="0.05" max="1" step="0.05" disabled={locked} value={note.velocity} onChange={e => change(p => ({ ...p, notes: p.notes.map(n => n.id === note.id ? { ...n, velocity: Number(e.target.value) } : n) }))}/></label><button disabled={locked} className="icon-button" aria-label="선택한 음표 삭제" onClick={() => { change(p => ({ ...p, notes: p.notes.filter(n => n.id !== selected) })); setSelected(null); }}><Icon name="trash" size={15}/></button></> : <span>클릭해서 음표 추가 · 드래그로 이동 · 우클릭으로 삭제</span>}<span className="grid-label">1/16 GRID</span></div>
