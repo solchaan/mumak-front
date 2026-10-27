@@ -143,11 +143,11 @@ export function chordMatches(catalog: ChordOption[], query: string, limit = 12):
   return ranked.sort((a, b) => a.rank - b.rank || a.index - b.index).slice(0, limit).map(x => x.option);
 }
 export function writeChord(p: Project, symbol: string, step: number, length: number, replaceId?: string): Project {
-  if (!Number.isInteger(step) || step < 0 || step >= 128 || !Number.isInteger(length) || length < 1 || step + length > 128) throw new Error('코드의 위치와 길이가 8마디를 벗어납니다.');
+  if (!Number.isInteger(step) || step < 0 || step >= p.bars * 16 || !Number.isInteger(length) || length < 1 || step + length > p.bars * 16) throw new Error('코드의 위치와 길이가 프로젝트 범위를 벗어납니다.');
   const parsed = parseChord(symbol);
   const old = p.chords.find(c => c.id === replaceId);
   if (p.chords.some(c => c.id !== replaceId && c.step === step)) throw new Error('같은 위치의 코드를 먼저 선택해 수정하세요.');
-  if (!old && p.chords.length >= 128) throw new Error('코드는 최대 128개까지 추가할 수 있습니다.');
+  if (!old && p.chords.length >= p.bars * 16) throw new Error('코드를 더 추가할 공간이 없습니다.');
   const others = p.chords.filter(c => c.id !== replaceId);
   // Lead-sheet rule: a chord lasts until the next symbol, so neighbours are trimmed instead of overlapping.
   const next = others.filter(c => c.step > step).sort((a, b) => a.step - b.step)[0];

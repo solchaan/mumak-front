@@ -14,7 +14,7 @@ export default function ScoreSheet({ project, onClose }: { project: Project; onC
   const [error, setError] = useState('');
   const systems = useRef<(HTMLDivElement | null)[]>([]);
   const g = geometry(project, view, BARS_PER_SYSTEM);
-  const count = 8 / BARS_PER_SYSTEM;
+  const count = Math.ceil(project.bars / BARS_PER_SYSTEM);
   useEffect(() => {
     const acc = accompaniment(project);
     try {
@@ -25,7 +25,7 @@ export default function ScoreSheet({ project, onClose }: { project: Project; onC
         renderer.resize(g.width, g.row);
         const context = renderer.getContext();
         context.setFillStyle('#111').setStrokeStyle('#111');
-        engraveSystem({ context, project, acc, geometry: g, bars: [i * BARS_PER_SYSTEM, i * BARS_PER_SYSTEM + 1], y: 0, system: i, chordLabels: true, barNumbers: true });
+        engraveSystem({ context, project, acc, geometry: g, bars: [i * BARS_PER_SYSTEM, i * BARS_PER_SYSTEM + 1].filter(bar => bar < project.bars), y: 0, system: i, chordLabels: true, barNumbers: true });
         const svg = element.querySelector('svg');
         svg?.setAttribute('viewBox', `0 0 ${g.width} ${g.row}`); svg?.setAttribute('aria-hidden', 'true');
       });

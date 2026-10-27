@@ -1,4 +1,4 @@
-import { duration, stepSeconds, type Drum, type Instrument, type Note, type Project, type Track } from './model';
+import { totalSteps, duration, stepSeconds, type Drum, type Instrument, type Note, type Project, type Track } from './model';
 import { accompaniment } from './notation';
 import { encodeWav } from './wav';
 
@@ -108,9 +108,9 @@ export class AudioEngine {
   private tick() {
     const ctx = this.context!; const p = this.project!; const unit = stepSeconds(p.bpm);
     const position = (ctx.currentTime - this.startAt) / unit;
-    if (!this.loop && position >= 128) { this.stop(); this.onEnd(); return; }
-    while (this.startAt + this.next * unit < ctx.currentTime + .12 && (this.loop || this.next < 128)) {
-      const step = this.next % 128; const at = this.startAt + this.next * unit;
+    if (!this.loop && position >= totalSteps(p)) { this.stop(); this.onEnd(); return; }
+    while (this.startAt + this.next * unit < ctx.currentTime + .12 && (this.loop || this.next < totalSteps(p))) {
+      const step = this.next % totalSteps(p); const at = this.startAt + this.next * unit;
       // If a background tab missed its scheduling window, resume without a burst of old notes.
       if (at >= ctx.currentTime - .01) {
         for (const note of p.notes) if (note.step === step) this.remember(tone(ctx, this.tracks!.keys, note.pitch, at, note.length * unit, note.velocity, p.instrument));
@@ -121,7 +121,7 @@ export class AudioEngine {
       }
       this.next++;
     }
-    this.onStep(position < 0 ? 0 : Math.floor(position) % 128);
+    this.onStep(position < 0 ? 0 : Math.floor(position) % totalSteps(p));
   }
   stop() {
     clearInterval(this.timer); this.timer = undefined;
@@ -132,7 +132,7 @@ export class AudioEngine {
   }
   async exportWav(p: Project, only?: Track): Promise<Blob> {
     const sampleRate = 44100;
-    // Fixed 8-bar timeline plus a one-second tail, identical for every stem.
+    // Project timeline plus a one-second tail, identical for every stem.
     const ctx = new OfflineAudioContext(2, Math.ceil((duration(p) + 1) * sampleRate), sampleRate);
     const tracks = buses(ctx, p, master(ctx));
     if (only) for (const key of ['keys', 'drums', 'voice'] as const) if (key !== only) tracks[key].gain.value = 0;

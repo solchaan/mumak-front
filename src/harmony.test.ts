@@ -9,7 +9,7 @@ const progression = ['C', 'G', 'Am', 'F'].flatMap((symbol, i) => [{ symbol, step
 test('suggestion payload sends notes and chords without recordings or titles', () => {
   const p = writeChord(createProject(true), 'G7', 0, 16);
   const payload = suggestionPayload({ ...p, recording: { dataUrl: 'data:audio/webm;base64,AAAA', duration: 1, offset: 0 } }, 16, 8);
-  assert.deepEqual(Object.keys(payload).sort(), ['chords', 'key', 'length', 'notes', 'step']);
+  assert.deepEqual(Object.keys(payload).sort(), ['bars', 'chords', 'key', 'length', 'notes', 'step']);
   assert.equal(payload.key, null);
   assert.deepEqual(suggestionPayload({ ...p, key: { tonic: 'G', mode: 'minor' } }, 0, 16).key, { tonic: 'G', mode: 'minor' });
   assert.equal(payload.notes.length, p.notes.length); assert.deepEqual(payload.chords[0], { symbol: 'G7', step: 0, length: 16 });

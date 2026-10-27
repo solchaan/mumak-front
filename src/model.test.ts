@@ -66,3 +66,29 @@ test('WAV encoder writes stereo PCM with clipping and correct lengths', () => {
   assert.equal(view.getUint32(24, true), 44100); assert.equal(view.getUint32(40, true), 12);
   assert.equal(view.getInt16(44, true), -32768); assert.equal(view.getInt16(52, true), 32767);
 });
+
+test('extended projects preserve content and enforce their own timeline', async () => {
+  const { appendBar, totalSteps, MAX_BARS } = await import('./model.ts');
+  const original = createProject(true);
+  const p = appendBar(original);
+  assert.equal(p.bars, 9); assert.equal(original.bars, 8);
+  assert.deepEqual(p.notes, original.notes);
+  p.notes = [...p.notes, { id: crypto.randomUUID(), pitch: 60, step: 143, length: 1, velocity: .7 }];
+  p.drums = { ...p.drums, kick: [...p.drums.kick, 143] };
+  assert.equal(parseProject(JSON.parse(JSON.stringify(p))).bars, 9);
+  assert.equal(duration(p), 22.5);
+  assert.equal(moveNote(p.notes.at(-1)!, 200, 60, totalSteps(p)).step, 143);
+  assert.throws(() => parseProject({ ...p, bars: 8 }));
+  for (const bars of [0, -1, 1.5, MAX_BARS + 1]) assert.throws(() => parseProject({ ...p, bars }));
+  assert.equal(appendBar({ ...p, bars: MAX_BARS }).bars, MAX_BARS);
+  // The empty MIDI track must retain all nine bars, including trailing silence.
+  const bytes = midiBytes({ ...createProject(), bars: 9 });
+  let cursor = 22, tick = 0;
+  while (cursor < bytes.length) {
+    let delta = 0, byte;
+    do { byte = bytes[cursor++]; delta = (delta << 7) | (byte & 127); } while (byte & 128);
+    tick += delta; assert.equal(bytes[cursor++], 255); cursor++;
+    const size = bytes[cursor++]; cursor += size;
+  }
+  assert.equal(tick, 9 * 1920);
+});

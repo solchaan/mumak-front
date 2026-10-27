@@ -1,3 +1,4 @@
+import { NoteDuration, useNoteHold } from './NoteDuration';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Renderer } from 'vexflow';
 import { moveNote, uid, type Note, type Project } from './model';
@@ -10,6 +11,8 @@ import './staff.css';
 interface Props { project: Project; page: number; step: number; selected: string | null; select: (id: string | null) => void; change: (project: Project) => void; preview: (pitch: number) => void; disabled: boolean; suggest: (step: number, length: number) => Promise<Harmony> }
 
 export default function StaffEditor({ project, page, step, selected, select, change, preview, disabled, suggest }: Props) {
+  const hold = useNoteHold(disabled, `${project.id}:${page}`);
+  const heldNote = project.notes.find(n => n.id === hold.target?.id);
   const canvas = useRef<HTMLDivElement>(null);
   const chordInput = useRef<HTMLInputElement>(null);
   const [hits, setHits] = useState<Hit[]>([]);
@@ -32,11 +35,13 @@ export default function StaffEditor({ project, page, step, selected, select, cha
   const chord = project.chords.find(c => c.id === chordId);
   const selectedNote = project.notes.find(n => n.id === selected);
   const start = page * 32;
+  const rows = Math.min(2, project.bars - page * 2);
+  const steps = project.bars * 16;
   const keyAcc = keyAccidentals(project.key);
   // One bar per system in the editor so the 16th-note grid stays wide enough to click.
   const g = geometry(project, view, 1);
   const { start: START, cell: CELL, row: ROW } = g;
-  const WIDTH = g.width, HEIGHT = ROW * 2, last = g.kinds.length - 1, melodyIndex = g.kinds.indexOf('melody');
+  const WIDTH = g.width, HEIGHT = ROW * rows, last = g.kinds.length - 1, melodyIndex = g.kinds.indexOf('melody');
   const noteX = (at: number) => g.noteX(0, at);
   const staveY = (row: number, k: number) => row * ROW + g.staveY(k);
   const spell = (n: Note) => n.spelling || keySpelling(n.pitch, project.key);
@@ -52,18 +57,18 @@ export default function StaffEditor({ project, page, step, selected, select, cha
       const context = renderer.getContext();
       context.setFillStyle('#293126').setStrokeStyle('#293126');
       const nextHits: Hit[] = [];
-      for (let row = 0; row < 2; row++) engraveSystem({ context, project, acc, geometry: g, bars: [page * 2 + row], y: row * ROW, system: row, onHit: hit => nextHits.push(hit) });
+      for (let row = 0; row < rows; row++) engraveSystem({ context, project, acc, geometry: g, bars: [page * 2 + row], y: row * ROW, system: row, onHit: hit => nextHits.push(hit) });
       const svg = canvas.current.querySelector('svg');
       svg?.setAttribute('viewBox', `0 0 ${WIDTH} ${HEIGHT}`); svg?.setAttribute('aria-hidden', 'true');
       setHits(nextHits); setRenderError('');
     } catch (e) { setRenderError(`악보를 표시하지 못했습니다: ${e instanceof Error ? e.message : String(e)}`); }
-  }, [project.notes, project.key, acc, page, view]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [project.notes, project.key, project.bars, acc, page, view]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function addNote(pitch: number, spelling: string, at = start + localStep) {
     if (disabled) return;
-    if (project.notes.length >= 512) { setError('음표는 최대 512개까지 추가할 수 있습니다.'); return; }
+    if (project.notes.length >= project.bars * 64) { setError('음표는 마디당 평균 64개까지 추가할 수 있습니다.'); return; }
     if (pitch < MIN_PITCH || pitch > MAX_PITCH) { setError('C4–C6 범위의 음표를 선택하세요.'); return; }
-    if (at + length > 128) { setError('음표 길이가 8마디를 벗어납니다. 길이를 줄여 주세요.'); return; }
+    if (at + length > steps) { setError('음표 길이가 프로젝트 범위를 벗어납니다. 길이를 줄여 주세요.'); return; }
     const note = { id: uid(), pitch, spelling, step: at, length, velocity: .75 };
     change({ ...project, notes: [...project.notes, note] }); select(note.id); setChordId(null); preview(pitch); setError('');
   }
@@ -98,7 +103,7 @@ export default function StaffEditor({ project, page, step, selected, select, cha
   }
   function editNote(pitch: number) {
     if (!selectedNote) return;
-    change({ ...project, notes: project.notes.map(n => n.id === selectedNote.id ? moveNote(n, n.step, pitch) : n) });
+    change({ ...project, notes: project.notes.map(n => n.id === selectedNote.id ? moveNote(n, n.step, pitch, steps) : n) });
   }
   function pickOption(name: string) {
     setSymbol(name); setListOpen(false); setActiveOption(-1); setError('');
@@ -109,6 +114,7 @@ export default function StaffEditor({ project, page, step, selected, select, cha
     change({ ...project, key: tonic ? { tonic, mode: mode as Mode } : null }); setHarmony(null); setError('');
   }
   return <div className="staff-editor">
+    {heldNote && hold.target && <NoteDuration note={heldNote} steps={steps} x={hold.target.x} y={hold.target.y} close={hold.close} change={length => change({ ...project, notes: project.notes.map(n => n.id === heldNote.id ? { ...n, length } : n) })}/> }
     <div className="staff-toolbar">
       <label>악보 표시<select aria-label="악보 표시" value={view} onChange={e => setView(e.target.value as View)}>{(Object.keys(VIEWS) as View[]).map(v => <option key={v} value={v}>{VIEW_LABELS[v]}</option>)}</select></label>
       <label>반주 패턴<select aria-label="반주 패턴" disabled={disabled} value={project.accompaniment.pattern} onChange={e => change({ ...project, accompaniment: { pattern: e.target.value as AccompanimentPattern } })}>{PATTERNS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}</select></label>
@@ -118,7 +124,7 @@ export default function StaffEditor({ project, page, step, selected, select, cha
       <span className="staff-range">높은음자리표 · C4–C6{project.key ? ` · ${keyLabel(project.key)}` : ''}</span>
     </div>
     <div className="staff-inputs">
-      <label>입력 위치<select aria-label="오선지 입력 위치" disabled={disabled} value={localStep} onChange={e => setLocalStep(Number(e.target.value))}>{Array.from({ length: 32 }, (_, i) => <option key={i} value={i}>{page * 2 + Math.floor(i / 16) + 1}마디 {Math.floor(i % 16 / 4) + 1}박{i % 4 ? ` + ${i % 4}/16` : ''}</option>)}</select></label>
+      <label>입력 위치<select aria-label="오선지 입력 위치" disabled={disabled} value={localStep} onChange={e => setLocalStep(Number(e.target.value))}>{Array.from({ length: rows * 16 }, (_, i) => <option key={i} value={i}>{page * 2 + Math.floor(i / 16) + 1}마디 {Math.floor(i % 16 / 4) + 1}박{i % 4 ? ` + ${i % 4}/16` : ''}</option>)}</select></label>
       <label>음높이<select aria-label="오선지 입력 음높이" disabled={disabled} value={pitchInput} onChange={e => setPitchInput(e.target.value)}>{Array.from({ length: 15 }, (_, i) => positionSpelling(i)).map(s => <option key={s} value={s}>{s}</option>)}</select></label>
       <button className="outline-button" disabled={disabled} onClick={() => { const s = pitchInput[0] + resolveAccidental(pitchInput[0]) + pitchInput.slice(-1); addNote(spellingPitch(s)!, s); }}>음표 추가</button>
     </div>
@@ -143,18 +149,18 @@ export default function StaffEditor({ project, page, step, selected, select, cha
     {harmony && <div className="chord-suggestions" aria-live="polite">
       <div className="chord-suggestions-head"><strong>{harmony.key.label}</strong><span>{harmony.key.estimated ? `추정 조성 · 신뢰도 ${Math.round(harmony.key.confidence * 100)}%` : '지정 조성'}{harmony.previous ? ` · 직전 ${harmony.previous.symbol}${harmony.previous.roman ? ` (${harmony.previous.roman})` : ''}` : ''} · {Math.floor(harmony.position.step / 16) + 1}마디 {Math.floor(harmony.position.step % 16 / 4) + 1}박부터 {harmony.position.length}칸</span></div>
       <div className="chord-chips" role="group" aria-label="추천 코드">{harmony.suggestions.map(s => <button type="button" key={s.symbol} className="chord-chip" title={s.reason} disabled={disabled} onClick={() => useSuggestion(s.symbol)}><strong>{s.symbol}</strong><small>{s.roman}</small></button>)}</div>
-      <div className="chord-progressions" role="group" aria-label="추천 코드 진행">{harmony.progressions.map(p => <button type="button" key={p.name} className="text-button" disabled={disabled} title={`${p.name} 진행을 8마디에 적용`} onClick={() => useProgression(p)}>{p.symbols.join(' – ')} 적용</button>)}</div>
+      <div className="chord-progressions" role="group" aria-label="추천 코드 진행">{harmony.progressions.map(p => <button type="button" key={p.name} className="text-button" disabled={disabled} title={`${p.name} 진행을 ${project.bars}마디에 적용`} onClick={() => useProgression(p)}>{p.symbols.join(' – ')} 적용</button>)}</div>
       {harmony.analysis.romans.length > 0 && <div className="chord-analysis"><span>현재 진행</span>{harmony.analysis.romans.map(r => <em key={`${r.step}-${r.symbol}`} title={`${Math.floor(r.step / 16) + 1}마디 ${r.symbol}`}>{r.roman ?? `${r.symbol}?`}</em>)}</div>}
       {harmony.tips.length > 0 && <ul className="chord-tips" aria-label="코드 진행 팁">{harmony.tips.map(t => <li key={t.text} className={`tip-${t.level}`}>{t.text}</li>)}</ul>}
     </div>}
     {(error || renderError) && <p className="staff-error" role="alert">{error || renderError}</p>}
     <div className="staff-scroll"><div className="staff-paper" style={{ width: WIDTH, height: HEIGHT }}>
       <div ref={canvas} className="staff-engraving"/>
-      <svg className="staff-overlay" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="group" aria-label={`${page * 2 + 1}–${page * 2 + 2}마디 오선지`} onPointerDown={event => {
+      <svg className="staff-overlay" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="group" aria-label={`${page * 2 + 1}–${Math.min(project.bars, page * 2 + 2)}마디 오선지`} onPointerDown={event => {
         if (disabled || event.button !== 0) return;
         const rect = event.currentTarget.getBoundingClientRect();
         const x = (event.clientX - rect.left) * WIDTH / rect.width, y = (event.clientY - rect.top) * HEIGHT / rect.height;
-        const row = Math.floor(y / ROW); if (row < 0 || row > 1 || x < START - 15 || x > START + CELL * 16) return;
+        const row = Math.floor(y / ROW); if (row < 0 || row >= rows || x < START - 15 || x > START + CELL * 16) return;
         const local = row * 16 + Math.max(0, Math.min(15, Math.round((x - START) / CELL)));
         // The strip above each system is the chord line: clicking it moves the cursor and focuses the chord name.
         if (y - row * ROW < 58) { event.preventDefault(); setLocalStep(local); setChordId(null); chordInput.current?.focus(); return; }
@@ -165,7 +171,7 @@ export default function StaffEditor({ project, page, step, selected, select, cha
         setLocalStep(local); const spelling = positionSpelling(position, resolveAccidental(positionSpelling(position)[0]));
         addNote(spellingPitch(spelling)!, spelling, start + local);
       }}>
-        {[0, 1].map(row => <g key={row} pointerEvents="none">
+        {Array.from({ length: rows }, (_, row) => row).map(row => <g key={row} pointerEvents="none">
           <text x="22" y={22 + row * ROW} className="staff-bar-label">{page * 2 + row + 1} 마디</text>
           {Array.from({ length: 16 }, (_, i) => <g key={i}><line x1={START + i * CELL} x2={START + i * CELL} y1={staveY(row, 0) + 20} y2={staveY(row, last) + 110} className={i % 4 === 0 ? 'staff-beat-line' : 'staff-grid-line'}/><text x={START + i * CELL} y={staveY(row, last) + 133} className="staff-beat-label">{i % 4 === 0 ? `${i / 4 + 1}박` : '·'}</text></g>)}
         </g>)}
@@ -173,18 +179,19 @@ export default function StaffEditor({ project, page, step, selected, select, cha
         {project.chords.filter(c => c.step >= start && c.step < start + 32).map(c => <rect key={`span-${c.id}`} className={`staff-chord-span ${c.id === chord?.id ? 'active' : ''}`} pointerEvents="none" x={noteX(c.step) - 8} y={53 + Math.floor((c.step - start) / 16) * ROW} width={Math.max(4, (Math.min(c.step + c.length, Math.floor(c.step / 16) * 16 + 16) - c.step) * CELL - 4)} height="2"/>)}
         {project.chords.filter(c => c.step >= start && c.step < start + 32).map(c => <g role="button" tabIndex={disabled ? -1 : 0} className={`staff-chord ${c.id === chord?.id ? 'active' : ''}`} key={c.id} aria-label={`코드 ${c.symbol}, ${Math.floor(c.step / 16) + 1}마디`} onPointerDown={e => { e.stopPropagation(); if (!disabled) chooseChord(c.id); }} onKeyDown={e => { if (!disabled && ['Enter', ' '].includes(e.key)) { e.preventDefault(); chooseChord(c.id); } }}><rect x={noteX(c.step) - 8} y={24 + Math.floor((c.step - start) / 16) * ROW} width={Math.max(38, c.symbol.length * 9 + 16)} height="26" rx="5"/><text x={noteX(c.step)} y={42 + Math.floor((c.step - start) / 16) * ROW}>{c.symbol}</text></g>)}
         {hits.map(hit => <g key={`${hit.note.id}:${hit.step}`} role="button" tabIndex={disabled ? -1 : 0} className={`staff-note ${hit.note.id === selected ? 'selected' : ''}`} data-pitch={hit.note.pitch} data-step={hit.step} aria-label={`음표 ${spell(hit.note)}, ${hit.note.length}칸`}
-          onPointerDown={e => { e.stopPropagation(); if (disabled || e.button !== 0) return; select(hit.note.id); setChordId(null); setLocalStep(Math.max(0, hit.note.step - start)); preview(hit.note.pitch); }}
-          onContextMenu={e => { e.preventDefault(); if (!disabled) { change({ ...project, notes: project.notes.filter(n => n.id !== hit.note.id) }); select(null); } }}
+          onPointerDown={e => { e.stopPropagation(); if (disabled || e.button !== 0) return; hold.down(e, hit.note); select(hit.note.id); setChordId(null); setLocalStep(Math.max(0, hit.note.step - start)); preview(hit.note.pitch); }}
+          onPointerMove={hold.move} onPointerUp={hold.cancel} onPointerCancel={hold.cancel} onPointerLeave={hold.cancel}
+          onContextMenu={e => { e.preventDefault(); if (hold.opened.current || ('pointerType' in e.nativeEvent && e.nativeEvent.pointerType === 'touch')) return; if (!disabled) { change({ ...project, notes: project.notes.filter(n => n.id !== hit.note.id) }); select(null); } }}
           onKeyDown={e => {
             if (disabled) return;
             if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); change({ ...project, notes: project.notes.filter(n => n.id !== hit.note.id) }); select(null); }
-            else if (e.key.startsWith('Arrow')) { e.preventDefault(); change({ ...project, notes: project.notes.map(n => n.id === hit.note.id ? moveNote(n, n.step + (e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0), n.pitch + (e.key === 'ArrowUp' ? 1 : e.key === 'ArrowDown' ? -1 : 0)) : n) }); }
-            else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(hit.note.id); setChordId(null); preview(hit.note.pitch); }
+            else if (e.key.startsWith('Arrow')) { e.preventDefault(); change({ ...project, notes: project.notes.map(n => n.id === hit.note.id ? moveNote(n, n.step + (e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0), n.pitch + (e.key === 'ArrowUp' ? 1 : e.key === 'ArrowDown' ? -1 : 0), steps) : n) }); }
+            else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(hit.note.id); const r = e.currentTarget.getBoundingClientRect(); hold.open(hit.note, r.left, r.bottom); }
           }}><rect x={hit.x - 12} y={hit.y - 5} width="25" height="10" rx="4"/></g>)}
         {step >= start && step < start + 32 && <line className="staff-playhead" pointerEvents="none" x1={noteX(step)} x2={noteX(step)} y1={staveY(Math.floor((step - start) / 16), 0) + 10} y2={staveY(Math.floor((step - start) / 16), last) + 113}/>}
       </svg>
     </div></div>
-    <div className="staff-help">오선지 클릭으로 멜로디 입력 · 악보 위 코드 줄을 클릭하면 그 위치에 코드 입력 · 반주 보표는 코드 기호와 반주 패턴에서 자동으로 만들어지며 직접 편집하지 않음 · 임시표 버튼이 "조표"면 조표에 맞는 음을 입력 · 음표 선택 후 방향키로 이동 · 우클릭/Delete로 삭제 · 악보 PDF는 내보내기에서</div>
+    <div className="staff-help">오선지 클릭으로 멜로디 입력 · 악보 위 코드 줄을 클릭하면 그 위치에 코드 입력 · 반주 보표는 코드 기호와 반주 패턴에서 자동으로 만들어지며 직접 편집하지 않음 · 임시표 버튼이 "조표"면 조표에 맞는 음을 입력 · 음표 길게 누르기/Enter로 길이 변경 · 음표 선택 후 방향키로 이동 · 우클릭/Delete로 삭제 · 악보 PDF는 내보내기에서</div>
     {selectedNote && <div className="staff-selected"><label>선택 음높이<select aria-label="선택한 음표 음높이" value={selectedNote.pitch} disabled={disabled} onChange={e => editNote(Number(e.target.value))}>{Array.from({ length: MAX_PITCH - MIN_PITCH + 1 }, (_, i) => i + MIN_PITCH).map(pitch => <option key={pitch} value={pitch}>{keySpelling(pitch, project.key)}</option>)}</select></label><span>길이·세기는 아래에서 편집합니다.</span></div>}
   </div>;
 }

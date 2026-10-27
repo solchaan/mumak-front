@@ -15,7 +15,7 @@ export interface Harmony {
 // The suggestion request carries notes and chords only; recordings never leave the browser for this call.
 export function suggestionPayload(p: Project, step: number, length: number) {
   return {
-    step, length, key: p.key,
+    bars: p.bars, step, length, key: p.key,
     notes: p.notes.map(({ id, pitch, step, length, velocity }) => ({ id, pitch, step, length, velocity })),
     chords: p.chords.map(({ symbol, step, length }) => ({ symbol, step, length })),
   };

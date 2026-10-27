@@ -1,4 +1,4 @@
-import { type Project } from './model';
+import { totalSteps, type Project } from './model';
 import { accompaniment, findKey } from './notation';
 function variable(value: number): number[] {
   const bytes = [value & 127];
@@ -35,6 +35,6 @@ export function midiBytes(p: Project): Uint8Array {
   let last = 0;
   const track: number[] = [];
   for (const event of events) { track.push(...variable(event.tick - last), ...event.data); last = event.tick; }
-  track.push(...variable(128 * 120 - last), 255, 47, 0);
+  track.push(...variable(totalSteps(p) * 120 - last), 255, 47, 0);
   return new Uint8Array([77, 84, 104, 100, 0, 0, 0, 6, 0, 0, 0, 1, 1, 224, 77, 84, 114, 107, ...u32(track.length), ...track]);
 }
