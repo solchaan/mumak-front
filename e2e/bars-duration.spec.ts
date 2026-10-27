@@ -1,8 +1,9 @@
+import { login } from './login-helper';
 import { test, expect } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
   await page.route('https://fonts.googleapis.com/**', r => r.abort());
-  await page.goto('/');
+  await page.goto('/'); await login(page);
   await page.getByRole('button', { name: '새로운 스케치' }).click();
   await page.getByRole('tab', { name: '오선지 · 코드' }).click();
 });
@@ -22,7 +23,7 @@ test('append odd and even bars, undo, edit and persist the ninth bar', async ({ 
   await page.getByRole('button', { name: '현재 프로젝트 저장' }).click();
   await expect(page.locator('.server-state')).toContainText('서버에 저장했습니다');
   await expect(page.locator('.save-status')).toContainText('브라우저에 저장됨');
-  await page.reload();
+  await page.reload(); await login(page);
   await expect(page.locator('.bar-overview button')).toHaveCount(9);
   await page.locator('.bar-overview button').last().click();
   await page.getByRole('tab', { name: '오선지 · 코드' }).click();

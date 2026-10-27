@@ -1,8 +1,9 @@
+import { login } from './login-helper';
 import { test, expect } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
   await page.route('https://fonts.googleapis.com/**', route => route.abort());
-  await page.goto('/');
+  await page.goto('/'); await login(page);
   await expect(page.getByLabel('프로젝트 이름')).toHaveValue('늦은 오후의 스케치');
 });
 
@@ -20,7 +21,7 @@ test('edit, undo, persist, and play a melody', async ({ page }) => {
   await page.getByLabel('kick 1번째 칸', { exact: true }).click();
   await expect(page.getByLabel('kick 1번째 칸', { exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.save-status')).toContainText('브라우저에 저장됨');
-  await page.reload();
+  await page.reload(); await login(page);
   await expect(page.getByLabel('프로젝트 이름')).toHaveValue('브라우저 테스트');
   await expect(page.getByRole('tab', { name: '오선지 · 코드' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.staff-note')).toHaveCount(1);
@@ -55,7 +56,7 @@ test('record fake microphone, stop, replay and export the voice stem', async ({ 
   await page.getByRole('button', { name: '녹음 정지', exact: true }).click();
   await expect(page.getByText('녹음한 오디오가 스케치에 담겼어요')).toBeVisible();
   await expect(page.locator('.save-status')).toContainText('브라우저에 저장됨');
-  await page.reload();
+  await page.reload(); await login(page);
   await expect(page.getByText('녹음한 오디오가 스케치에 담겼어요')).toBeVisible();
   await page.getByRole('button', { name: '재생', exact: true }).click();
   await expect(page.getByRole('button', { name: '재생 정지', exact: true })).toBeVisible();
@@ -80,10 +81,10 @@ test('deletion cancels pending autosave and empty titles remain reloadable', asy
   await page.getByRole('button', { name: '현재 스케치 삭제' }).click();
   await expect(page.getByLabel('프로젝트 이름')).toHaveValue('새로운 아이디어');
   await expect(page.locator('.save-status')).toContainText('브라우저에 저장됨');
-  await page.reload();
+  await page.reload(); await login(page);
   await expect(page.locator('.project-link')).toHaveCount(1);
   await page.getByLabel('프로젝트 이름').fill('');
   await expect(page.locator('.save-status')).toContainText('브라우저에 저장됨');
-  await page.reload();
+  await page.reload(); await login(page);
   await expect(page.getByLabel('프로젝트 이름')).toHaveValue('이름 없는 스케치');
 });

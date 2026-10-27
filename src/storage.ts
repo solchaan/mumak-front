@@ -91,7 +91,8 @@ export async function apiRequest<T>(base: string, token: string, path: string, m
     method, headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body !== undefined ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(15000), credentials: 'omit',
   });
-  if (!response.ok) throw new Error(response.status === 401 ? 'API 토큰을 확인하세요.' : `서버 요청 실패 (${response.status})`);
+  if (response.status === 401) window.dispatchEvent(new Event('mumak:unauthorized'));
+  if (!response.ok) throw new Error(response.status === 401 ? '아이디와 비밀번호를 확인하거나 다시 로그인해 주세요.' : `서버 요청 실패 (${response.status})`);
   return response.status === 204 ? undefined as T : response.json();
 }
 export function download(blob: Blob, filename: string) {

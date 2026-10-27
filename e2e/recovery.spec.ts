@@ -1,8 +1,9 @@
+import { login } from './login-helper';
 import { test, expect } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
   await page.route('https://fonts.googleapis.com/**', route => route.abort());
-  await page.goto('/');
+  await page.goto('/'); await login(page);
   await page.getByRole('button', { name: '새로운 스케치', exact: true }).click();
   await expect(page.locator('.save-status')).toHaveText('브라우저에 저장됨');
 });
@@ -32,7 +33,7 @@ test('recovery survives reload and can itself be undone', async ({ page }) => {
   await expect(page.locator('.save-status')).toHaveText('브라우저에 저장됨');
   await title.fill('변경한 제목');
   await expect(page.locator('.save-status')).toHaveText('브라우저에 저장됨');
-  await page.reload();
+  await page.reload(); await login(page);
   await expect(title).toHaveValue('변경한 제목');
   await expect(page.locator('.save-status')).toHaveText('브라우저에 저장됨');
   page.once('dialog', dialog => dialog.accept());
@@ -58,7 +59,7 @@ test('storage failure preserves the previous save and offers retry', async ({ pa
   await expect(page.locator('.save-status')).toContainText('저장 실패');
   await page.getByRole('button', { name: '저장 다시 시도' }).click();
   await expect(page.locator('.save-status')).toHaveText('브라우저에 저장됨');
-  await page.reload();
+  await page.reload(); await login(page);
   await expect(page.getByLabel('프로젝트 이름')).toHaveValue('다시 저장할 제목');
 });
 
@@ -90,7 +91,7 @@ test('a damaged current save falls back to its valid recovery copy', async ({ pa
       tx.onabort = () => { db.close(); reject(tx.error); };
     };
   }));
-  await page.reload();
+  await page.reload(); await login(page);
   await expect(page.getByLabel('프로젝트 이름')).toHaveValue('안전한 저장본');
   await expect(page.locator('.save-status')).toHaveText('브라우저에 저장됨');
 });
@@ -123,7 +124,7 @@ test('upgrading the old browser database preserves projects', async ({ page }) =
       };
     });
   });
-  await page.reload();
+  await page.reload(); await login(page);
   await expect(page.getByLabel('프로젝트 이름')).toHaveValue('이전 버전 스케치');
   await page.getByLabel('프로젝트 이름').fill('업데이트 후 편집');
   await expect(page.locator('.save-status')).toHaveText('브라우저에 저장됨');

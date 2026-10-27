@@ -12,6 +12,6 @@ export default defineConfig({
   },
   webServer: [
     { command: 'npm run dev -- --port 4178', url: 'http://127.0.0.1:4178', env: { VITE_API_URL: 'http://127.0.0.1:3018' }, reuseExistingServer: false },
-    { command: 'node ../mumak-back/src/server.js', url: 'http://127.0.0.1:3018/api/health', env: { DATA_DIR: resolve('.test-data'), PORT: '3018', ALLOWED_ORIGINS: 'http://127.0.0.1:4178' }, reuseExistingServer: false },
+    { command: 'node ../mumak-back/src/server.js', url: 'http://127.0.0.1:3018/api/health', env: { API_TOKEN: 'mumak-e2e-login-token', DATA_DIR: resolve('.test-data'), PORT: '3018', ALLOWED_ORIGINS: 'http://127.0.0.1:4178' }, reuseExistingServer: false },
   ],
 });

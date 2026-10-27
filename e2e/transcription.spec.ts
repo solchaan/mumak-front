@@ -1,3 +1,4 @@
+import { login } from './login-helper';
 import { test, expect, type Page } from '@playwright/test';
 import { createProject } from '../src/model';
 import { encodeWav } from '../src/wav';
@@ -21,7 +22,7 @@ async function loadRecording(page: Page, silence = false, broken = false) {
 
 test.beforeEach(async ({ page }) => {
   await page.route('https://fonts.googleapis.com/**', r => r.abort());
-  await page.goto('/');
+  await page.goto('/'); await login(page);
 });
 
 test('recording converts locally, previews, appends beyond eight bars and persists with undo', async ({ page }) => {
@@ -50,7 +51,7 @@ test('recording converts locally, previews, appends beyond eight bars and persis
   await page.getByRole('button', { name: '다시 실행', exact: true }).click();
   await expect(page.locator('.bar-overview button')).toHaveCount(9);
   await expect(page.locator('.save-status')).toContainText('브라우저에 저장됨');
-  await page.reload(); await page.locator('.bar-overview button').last().click();
+  await page.reload(); await login(page); await page.locator('.bar-overview button').last().click();
   await expect(page.locator('.staff-note')).toHaveCount(2);
   await page.locator('.bar-overview button').first().click();
   await expect(page.locator('.staff-note')).toHaveCount(1);

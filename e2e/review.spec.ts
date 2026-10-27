@@ -1,8 +1,9 @@
+import { login } from './login-helper';
 import { test, expect } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
   await page.route('https://fonts.googleapis.com/**', route => route.abort());
-  await page.goto('/');
+  await page.goto('/'); await login(page);
   await page.getByRole('button', { name: '새로운 스케치', exact: true }).click();
   await page.getByRole('tab', { name: '오선지 · 코드' }).click();
   await page.getByLabel('조표', { exact: true }).selectOption('C|major');

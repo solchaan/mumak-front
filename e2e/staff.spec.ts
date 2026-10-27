@@ -1,8 +1,9 @@
+import { login } from './login-helper';
 import { test, expect } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
   await page.route('https://fonts.googleapis.com/**', r => r.abort());
-  await page.goto('/');
+  await page.goto('/'); await login(page);
   await page.getByRole('button', { name: '새로운 스케치' }).click();
   await page.getByRole('tab', { name: '오선지 · 코드' }).click();
   await expect(page.locator('.staff-engraving svg')).toBeVisible();
@@ -49,7 +50,7 @@ test('add, edit, persist and delete a chord symbol without touching melody notes
   await page.locator('.remote-list button').filter({ hasText: '오선지 저장 테스트' }).first().click();
   await expect(page.locator('.staff-chord')).toContainText('Bbmaj7');
   await expect(page.locator('.save-status')).toContainText('브라우저에 저장됨');
-  await page.reload();
+  await page.reload(); await login(page);
   await page.getByRole('tab', { name: '오선지 · 코드' }).click();
   await expect(page.locator('.staff-chord')).toContainText('Bbmaj7');
   await page.locator('.staff-chord').click();
@@ -132,7 +133,7 @@ test('a key signature drives accidentals, pins suggestions and persists', async 
   await expect(page.locator('.chord-suggestions-head')).toContainText('지정 조성');
   await expect(page.locator('.chord-chip').first()).toContainText('G');
   await expect(page.locator('.save-status')).toContainText('브라우저에 저장됨');
-  await page.reload();
+  await page.reload(); await login(page);
   await page.getByRole('tab', { name: '오선지 · 코드' }).click();
   await expect(page.getByLabel('조표', { exact: true })).toHaveValue('G|major');
   await expect(page.locator('.staff-note')).toHaveCount(2);
@@ -198,7 +199,7 @@ test('score view can add the generated accompaniment grand staff or show it alon
   await expect(clefs).toHaveCount(2);
   await expect(page.locator('.staff-chord')).toContainText('C');
   await expect(page.locator('.save-status')).toContainText('브라우저에 저장됨');
-  await page.reload();
+  await page.reload(); await login(page);
   await page.getByRole('tab', { name: '오선지 · 코드' }).click();
   await expect(page.getByLabel('반주 패턴')).toHaveValue('whole');
   await expect(page.locator('.staff-error')).toHaveCount(0);

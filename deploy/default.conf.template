@@ -6,7 +6,7 @@ server {
   location / { try_files $uri $uri/ /index.html; }
   location /api/ {
     proxy_pass http://mumak-api:3001;
-    proxy_set_header Authorization "Bearer ${API_TOKEN}";
+    proxy_set_header Authorization $http_authorization;
     proxy_set_header Host $host;
   }
 }
